@@ -241,6 +241,35 @@ def test_categories_language_is_not_requested(api: tunein.TuneIn) -> None:
 
 
 @responses.activate
+def test_categories_local_sends_the_configured_location() -> None:
+    api = tunein.TuneIn(timeout=1000, location="51.5,-0.13")
+    add_response("Browse.ashx", [])
+
+    api.categories("local")
+
+    assert "latlon=51.5,-0.13" in request_url()
+
+
+@responses.activate
+def test_categories_local_without_a_location(api: tunein.TuneIn) -> None:
+    add_response("Browse.ashx", [])
+
+    api.categories("local")
+
+    assert "latlon=" not in request_url()
+
+
+@responses.activate
+def test_the_location_is_only_for_local_radio() -> None:
+    api = tunein.TuneIn(timeout=1000, location="51.5,-0.13")
+    add_response("Browse.ashx", [])
+
+    api.categories("music")
+
+    assert "latlon=" not in request_url()
+
+
+@responses.activate
 def test_categories_location_uses_the_root_region(api: tunein.TuneIn) -> None:
     add_response("Browse.ashx", [SECTION_LINK])
 

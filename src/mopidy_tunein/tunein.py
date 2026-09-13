@@ -260,6 +260,7 @@ class TuneIn:
         timeout: int,
         filter_: str | None = None,
         formats: Iterable[str] | None = None,
+        location: str | None = None,
         session: requests.Session | None = None,
     ) -> None:
         self._base_uri = "https://opml.radiotime.com/%s"
@@ -270,6 +271,7 @@ class TuneIn:
         else:
             self._filter = ""
         self._formats = f"&formats={','.join(formats)}" if formats else ""
+        self._location = f"&latlon={location}" if location else ""
         self._stations: dict[str, TuneInItem] = {}
 
     def reload(self) -> None:
@@ -325,6 +327,8 @@ class TuneIn:
             return []  # TuneIn's API is a mess here, cba
         else:
             args = "&c=" + category
+        if category == "local":
+            args += self._location
 
         # Take a copy so we don't modify the cached data
         results = list(self._tunein("Browse.ashx", args))

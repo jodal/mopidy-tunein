@@ -47,6 +47,7 @@ class TuneInBackend(pykka.ThreadingActor, backend.Backend):
             timeout=config["tunein"]["timeout"],
             filter_=config["tunein"]["filter"],
             formats=config["tunein"]["formats"],
+            location=config["tunein"]["location"],
             session=self._session,
         )
         self.library = TuneInLibrary(self)

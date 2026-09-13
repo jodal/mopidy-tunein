@@ -22,6 +22,7 @@ class Extension(ext.Extension):
         schema["timeout"] = config.Integer(minimum=0)
         schema["filter"] = config.String(optional=True, choices=("station", "program"))
         schema["formats"] = config.List(optional=True)
+        schema["location"] = config.String(optional=True)
         return schema
 
     @override
