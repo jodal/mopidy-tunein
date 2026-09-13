@@ -8,11 +8,6 @@
 [TuneIn](https://tunein.com). Listen to the world's radio with 70,000 stations
 of music, sports and news streaming from every continent.
 
-Acknowledgement and thanks to Marius Wyss for his original version of this
-extension, and to Brian Hornsby's [XBMC
-plugin](https://github.com/brianhornsby/plugin.audio.tuneinradio) that it was
-based on.
-
 This product uses TuneIn but is not endorsed, certified or otherwise approved
 in any way by TuneIn. TuneIn is the registered trade mark of TuneIn Inc.
 
@@ -26,12 +21,10 @@ python3 -m pip install mopidy-tunein
 
 See https://mopidy.com/ext/tunein/ for alternative installation methods.
 
-Some radio streams need additional audio plugins. You find these in the
-GStreamer plugin packages for your system:
-
-- `gstreamer1.0-plugins-ugly`
-- `gstreamer1.0-plugins-bad`
-- `gstreamer1.0-libav`
+Almost all stations stream MP3, which the GStreamer plugins that Mopidy
+already needs can decode. To also play the stations that stream AAC, install
+`gstreamer1.0-plugins-bad` or `gstreamer1.0-libav`, or the packages that hold
+these GStreamer plugin sets on your system.
 
 ## Configuration
 
@@ -136,3 +129,7 @@ build and publish the release to
 - Original author: [Nick Steel](https://github.com/kingosticks)
 - Current maintainer: [Nick Steel](https://github.com/kingosticks)
 - [Contributors](https://github.com/mopidy/mopidy-tunein/graphs/contributors)
+
+Thanks to Marius Wyss for the original version of this extension, and to Brian
+Hornsby's [XBMC plugin](https://github.com/brianhornsby/plugin.audio.tuneinradio),
+which it was based on.
