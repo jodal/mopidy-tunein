@@ -4,6 +4,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 from urllib import request
+from urllib.parse import urlsplit, urlunsplit
 
 from mopidy.models import Album, Artist, Image, Ref, Track
 from mopidy.types import Uri
@@ -16,6 +17,22 @@ if TYPE_CHECKING:
     from mopidy_tunein.tunein import TuneInItem
 
 logger = logging.getLogger(__name__)
+
+
+def secure_image_uri(uri: str) -> Uri:
+    """Give back a TuneIn image URI with the https scheme.
+
+    The API answers with http, which a browser blocks as mixed content when
+    it shows a Mopidy web client over https.
+    """
+    parts = urlsplit(uri)
+    if (
+        parts.scheme == "http"
+        and parts.hostname
+        and (parts.hostname == "tunein.com" or parts.hostname.endswith(".tunein.com"))
+    ):
+        return Uri(urlunsplit(parts._replace(scheme="https")))
+    return Uri(uri)
 
 
 def unparse_uri(variant: str, identifier: str) -> Uri:
@@ -53,7 +70,7 @@ def station_to_track(station: TuneInItem) -> Track:
 
 def station_to_image(station: TuneInItem | None) -> Image | None:
     if station is not None and "image" in station:
-        return Image(uri=station["image"])
+        return Image(uri=secure_image_uri(station["image"]))
     return None
 
 
