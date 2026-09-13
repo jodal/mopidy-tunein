@@ -1,4 +1,4 @@
-from typing import ClassVar
+import pytest
 
 from mopidy_tunein import tunein
 
@@ -39,36 +39,24 @@ Ref3=http://tmp.com/baz
 """
 
 
-class BasePlaylistAsx:
-    valid: ClassVar[bytes] = b""
-    parse = staticmethod(tunein.parse_asx)
-
-    def test_parse_valid_playlist(self) -> None:
-        uris = list(self.parse(self.valid))
-        expected = ["file:///tmp/foo", "file:///tmp/bar", "file:///tmp/baz"]
-        assert uris == expected
+EXPECTED = ["file:///tmp/foo", "file:///tmp/bar", "file:///tmp/baz"]
 
 
-class AsxPlaylistTest(BasePlaylistAsx):
-    valid = ASX
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(ASX, id="asx"),
+        pytest.param(SIMPLE_ASX, id="simple-asx"),
+        pytest.param(OLD_ASX, id="old-asx"),
+    ],
+)
+def test_parse_valid_playlist(data: bytes) -> None:
+    assert list(tunein.parse_asx(data)) == EXPECTED
 
 
-class AsxSimplePlaylistTest(BasePlaylistAsx):
-    valid = SIMPLE_ASX
-
-
-class AsxOldPlaylistTest(BasePlaylistAsx):
-    valid = OLD_ASX
-
-
-class TestPlaylist:
-    parse = staticmethod(tunein.parse_asx)
-
-    def test_parse_asf_playlist(self) -> None:
-        uris = list(self.parse(ASF_ASX))
-        expected = [
-            "mms://tmp.com/foo-mbr?mswmext=.asf",
-            "mms://tmp.com:80/bar-mbr?mswmext=.asf",
-            "http://tmp.com/baz",
-        ]
-        assert uris == expected
+def test_parse_asf_playlist() -> None:
+    assert list(tunein.parse_asx(ASF_ASX)) == [
+        "mms://tmp.com/foo-mbr?mswmext=.asf",
+        "mms://tmp.com:80/bar-mbr?mswmext=.asf",
+        "http://tmp.com/baz",
+    ]
