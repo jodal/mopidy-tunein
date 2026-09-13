@@ -21,6 +21,6 @@ class Extension(ext.Extension):
         return schema
 
     def setup(self, registry):
-        from .actor import TuneInBackend
+        from .actor import TuneInBackend  # noqa: PLC0415
 
         registry.add("backend", TuneInBackend)

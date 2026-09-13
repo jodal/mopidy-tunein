@@ -1,11 +1,13 @@
 import logging
 import time
 import urllib.parse
+from typing import ClassVar
 
 import pykka
 from mopidy import backend, exceptions
 from mopidy.audio import scan
 from mopidy.models import Ref, SearchResult
+from mopidy.types import UriScheme
 
 from mopidy_tunein import Extension, http, parsers, translator, tunein
 
@@ -18,7 +20,7 @@ def get_requests_session(proxy_config):
 
 
 class TuneInBackend(pykka.ThreadingActor, backend.Backend):
-    uri_schemes = ["tunein"]
+    uri_schemes: ClassVar[list[UriScheme]] = [UriScheme("tunein")]
 
     def __init__(self, config, audio):
         super().__init__()
@@ -50,16 +52,24 @@ class TuneInLibrary(backend.LibraryProvider):
         variant, identifier = translator.parse_uri(uri)
         logger.debug(f"Browsing {uri!r}")
         if variant == "root":
-            for category in self.backend.tunein.categories():
-                result.append(translator.category_to_ref(category))
+            result.extend(
+                translator.category_to_ref(category)
+                for category in self.backend.tunein.categories()
+            )
         elif variant == "category" and identifier:
-            for section in self.backend.tunein.categories(identifier):
-                result.append(translator.section_to_ref(section, identifier))
+            result.extend(
+                translator.section_to_ref(section, identifier)
+                for section in self.backend.tunein.categories(identifier)
+            )
         elif variant == "location" and identifier:
-            for location in self.backend.tunein.locations(identifier):
-                result.append(translator.section_to_ref(location, "local"))
-            for station in self.backend.tunein.stations(identifier):
-                result.append(translator.station_to_ref(station))
+            result.extend(
+                translator.section_to_ref(location, "local")
+                for location in self.backend.tunein.locations(identifier)
+            )
+            result.extend(
+                translator.station_to_ref(station)
+                for station in self.backend.tunein.stations(identifier)
+            )
         elif variant == "section" and identifier:
             if self.backend.tunein.related(identifier):
                 result.append(
@@ -69,27 +79,39 @@ class TuneInLibrary(backend.LibraryProvider):
                 result.append(
                     Ref.directory(uri=f"tunein:shows:{identifier}", name="Shows")
                 )
-            for station in self.backend.tunein.featured(identifier):
-                result.append(translator.section_to_ref(station))
-            for station in self.backend.tunein.local(identifier):
-                result.append(translator.station_to_ref(station))
-            for station in self.backend.tunein.stations(identifier):
-                result.append(translator.station_to_ref(station))
+            result.extend(
+                translator.section_to_ref(station)
+                for station in self.backend.tunein.featured(identifier)
+            )
+            result.extend(
+                translator.station_to_ref(station)
+                for station in self.backend.tunein.local(identifier)
+            )
+            result.extend(
+                translator.station_to_ref(station)
+                for station in self.backend.tunein.stations(identifier)
+            )
         elif variant == "related" and identifier:
-            for section in self.backend.tunein.related(identifier):
-                result.append(translator.section_to_ref(section))
+            result.extend(
+                translator.section_to_ref(section)
+                for section in self.backend.tunein.related(identifier)
+            )
         elif variant == "shows" and identifier:
-            for show in self.backend.tunein.shows(identifier):
-                result.append(translator.show_to_ref(show))
+            result.extend(
+                translator.show_to_ref(show)
+                for show in self.backend.tunein.shows(identifier)
+            )
         elif variant == "episodes" and identifier:
-            for episode in self.backend.tunein.episodes(identifier):
-                result.append(translator.station_to_ref(episode))
+            result.extend(
+                translator.station_to_ref(episode)
+                for episode in self.backend.tunein.episodes(identifier)
+            )
         else:
             logger.debug(f"Unknown URI: {uri!r}")
 
         return result
 
-    def refresh(self, uri=None):
+    def refresh(self, uri=None):  # noqa: ARG002
         self.backend.tunein.reload()
 
     def lookup(self, uri):
@@ -115,9 +137,9 @@ class TuneInLibrary(backend.LibraryProvider):
                 results[uri] = [image]
         return results
 
-    def search(self, query=None, uris=None, exact=False):
+    def search(self, query=None, uris=None, exact=False):  # noqa: ARG002
         if query is None or not query:
-            return
+            return None
         tunein_query = translator.mopidy_to_tunein_query(query)
         tracks = []
         for station in self.backend.tunein.search(tunein_query):
@@ -132,7 +154,7 @@ class TuneInPlayback(backend.PlaybackProvider):
         self._stream_info = None
 
     def translate_uri(self, uri):
-        variant, identifier = translator.parse_uri(uri)
+        _variant, identifier = translator.parse_uri(uri)
         station = self.backend.tunein.station(identifier)
         if not station:
             return None
@@ -143,13 +165,12 @@ class TuneInPlayback(backend.PlaybackProvider):
             new_uri = self.unwrap_stream(uri)
             if new_uri:
                 return new_uri
-            else:
-                logger.debug("Mopidy translate_uri failed.")
-                new_uris = self.backend.tunein.parse_stream_url(uri)
-                if new_uris == [uri]:
-                    logger.debug(f"Last attempt, play stream anyway: {uri!r}")
-                    return uri
-                stream_uris.extend(new_uris)
+            logger.debug("Mopidy translate_uri failed.")
+            new_uris = self.backend.tunein.parse_stream_url(uri)
+            if new_uris == [uri]:
+                logger.debug(f"Last attempt, play stream anyway: {uri!r}")
+                return uri
+            stream_uris.extend(new_uris)
         logger.debug("TuneIn lookup failed.")
         return None
 
@@ -172,7 +193,7 @@ class TuneInPlayback(backend.PlaybackProvider):
 
 
 # Shamelessly taken from mopidy.stream.actor
-def _unwrap_stream(uri, timeout, scanner, requests_session):
+def _unwrap_stream(uri, timeout, scanner, requests_session):  # noqa: PLR0911
     """
     Get a stream URI from a playlist URI, ``uri``.
 
@@ -191,8 +212,7 @@ def _unwrap_stream(uri, timeout, scanner, requests_session):
                 "playlist referenced itself",
             )
             return None, None
-        else:
-            seen_uris.add(uri)
+        seen_uris.add(uri)
 
         logger.debug(f"Unwrapping stream from URI: {uri!r}")
 
@@ -241,6 +261,8 @@ def _unwrap_stream(uri, timeout, scanner, requests_session):
             )
             return uri, None
 
-        # TODO Test streams and return first that seems to be playable
+        # TODO: Test streams and return first that seems to be playable
         logger.debug(f"Parsed playlist ({uri!r}) and found new URI: {uris[0]!r}")
         uri = urllib.parse.urljoin(uri, uris[0])
+
+    return None, None

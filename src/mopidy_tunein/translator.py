@@ -45,6 +45,7 @@ def station_to_track(station):
 def station_to_image(station):
     if station is not None and "image" in station:
         return Image(uri=station["image"])
+    return None
 
 
 def show_to_ref(show):
@@ -86,10 +87,11 @@ def get_id_type(guide_id):
 
 
 def mopidy_to_tunein_query(mopidy_query):
-    tunein_query = []
-    for field, values in mopidy_query.items():
-        for value in values:
-            if field == "any":
-                tunein_query.append(value)
+    tunein_query = [
+        value
+        for field, values in mopidy_query.items()
+        if field == "any"
+        for value in values
+    ]
     query = " ".join(tunein_query)
     return request.pathname2url(query)

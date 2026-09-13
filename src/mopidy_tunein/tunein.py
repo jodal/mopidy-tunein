@@ -3,10 +3,10 @@ import io
 import logging
 import re
 import time
-import xml.etree.ElementTree as elementtree  # noqa: N813
 from collections import OrderedDict
 from contextlib import closing
 from urllib.parse import urlparse
+from xml.etree import ElementTree as ET
 
 import requests
 
@@ -17,7 +17,7 @@ class PlaylistError(Exception):
     pass
 
 
-class cache:  # noqa N801
+class cache:  # noqa: N801
     # TODO: merge this to util library (copied from mopidy-spotify)
 
     def __init__(self, ctl=0, ttl=3600):
@@ -34,19 +34,18 @@ class cache:  # noqa N801
                 age = now - last_update
                 if self._call_count > self.ctl or age > self.ttl:
                     self._call_count = 0
-                    raise AttributeError
+                    raise AttributeError  # noqa: TRY301
                 if self.ctl:
                     self._call_count += 1
-                return value
-
             except (KeyError, AttributeError):
                 value = func(*args)
                 if value:
                     self.cache[args] = (value, now)
                 return value
-
             except TypeError:
                 return func(*args)
+            else:
+                return value
 
         def clear():
             self.cache.clear()
@@ -94,7 +93,7 @@ def parse_pls(data):
 
 
 def fix_asf_uri(uri):
-    return re.sub(r"http://(.+\?mswmext=\.asf)", r"mms://\1", uri, flags=re.I)
+    return re.sub(r"http://(.+\?mswmext=\.asf)", r"mms://\1", uri, flags=re.IGNORECASE)
 
 
 def parse_old_asx(data):
@@ -117,9 +116,9 @@ def parse_new_asx(data):
     # Copied from mopidy.audio.playlists
     try:
         # Last element will be root.
-        for _event, element in elementtree.iterparse(io.BytesIO(data)):
+        for _event, element in ET.iterparse(io.BytesIO(data)):
             element.tag = element.tag.lower()  # normalize
-    except elementtree.ParseError:
+    except ET.ParseError:
         return
 
     for ref in element.findall("entry/ref[@href]"):
@@ -132,9 +131,7 @@ def parse_new_asx(data):
 def parse_asx(data):
     if b"asx" in data[0:50].lower():
         return parse_new_asx(data)
-    else:
-        return parse_old_asx(data)
-
+    return parse_old_asx(data)
 
 
 def find_playlist_parser(extension, content_type):
@@ -150,12 +147,12 @@ def find_playlist_parser(extension, content_type):
         "audio/x-scpls": parse_pls,
     }
 
-    parser = extension_map.get(extension, None)
+    parser = extension_map.get(extension)
     if not parser and content_type:
         # Annoying case where the url gave us no hints so try and work it out
         # from the header's content-type instead.
         # This might turn out to be server-specific...
-        parser = content_type_map.get(content_type.lower(), None)
+        parser = content_type_map.get(content_type.lower())
     return parser
 
 
@@ -301,6 +298,7 @@ class TuneIn:
         listings = self._filter_results(results, "Listing", self._map_listing)
         if listings:
             return listings[0]
+        return None
 
     def parse_stream_url(self, url):
         logger.debug(f"Extracting URIs from {url!r}")
@@ -327,10 +325,11 @@ class TuneIn:
     def tune(self, station):
         logger.debug(f"Tuning station id {station['guide_id']}")
         args = f"&id={station['guide_id']}"
-        stream_uris = []
-        for stream in self._tunein("Tune.ashx", args):
-            if "url" in stream:
-                stream_uris.append(stream["url"])
+        stream_uris = [
+            stream["url"]
+            for stream in self._tunein("Tune.ashx", args)
+            if "url" in stream
+        ]
         if not stream_uris:
             logger.error(f"Failed to tune station id {station['guide_id']}")
         return list(OrderedDict.fromkeys(stream_uris))
@@ -350,13 +349,14 @@ class TuneIn:
         logger.debug(f"Searching TuneIn for '{query}'")
         args = f"&query={query}{self._filter}"
         search_results = self._tunein("Search.ashx", args)
-        results = []
-        for item in self._flatten(search_results):
-            if item.get("type", "") == "audio":
-                # Only return stations
-                self._stations[item["guide_id"]] = item
-                results.append(item)
-
+        # Only return stations
+        results = [
+            item
+            for item in self._flatten(search_results)
+            if item.get("type", "") == "audio"
+        ]
+        for item in results:
+            self._stations[item["guide_id"]] = item
         return results
 
     @cache()
