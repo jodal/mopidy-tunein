@@ -80,6 +80,8 @@ class TuneInLibrary(backend.LibraryProvider):
                 refs = self._browse_location(identifier)
             case "section":
                 refs = self._browse_section(identifier)
+            case "stations":
+                refs = self._browse_stations(identifier)
             case "related":
                 refs = self._browse_related(identifier)
             case "shows":
@@ -133,7 +135,28 @@ class TuneInLibrary(backend.LibraryProvider):
             translator.station_to_ref(station)
             for station in self.backend.tunein.stations(identifier)
         )
+        result.extend(self._more_stations_ref(identifier))
         return result
+
+    def _browse_stations(self, identifier: str) -> list[Ref]:
+        guide_id, offset = translator.parse_page(identifier)
+        result = [
+            translator.station_to_ref(station)
+            for station in self.backend.tunein.stations(guide_id, offset)
+        ]
+        result.extend(self._more_stations_ref(guide_id, offset))
+        return result
+
+    def _more_stations_ref(self, guide_id: str, offset: int = 0) -> list[Ref]:
+        next_offset = self.backend.tunein.next_stations_offset(guide_id, offset)
+        if next_offset is None:
+            return []
+        return [
+            Ref.directory(
+                uri=translator.unparse_page_uri(guide_id, next_offset),
+                name="More stations",
+            )
+        ]
 
     def _browse_related(self, identifier: str) -> list[Ref]:
         return [

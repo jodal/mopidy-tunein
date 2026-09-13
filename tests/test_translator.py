@@ -39,6 +39,33 @@ def test_secure_image_uri(uri: str, expected: str) -> None:
     assert translator.secure_image_uri(uri) == expected
 
 
+def test_unparse_page_uri() -> None:
+    assert translator.unparse_page_uri("c57943", 26) == "tunein:stations:c57943_26"
+
+
+@pytest.mark.parametrize(
+    ("identifier", "expected"),
+    [
+        ("c57943_26", ("c57943", 26)),
+        ("c57943", ("c57943", 0)),
+        ("c57943_", ("c57943", 0)),
+        ("c57943_lots", ("c57943", 0)),
+    ],
+)
+def test_parse_page(identifier: str, expected: tuple[str, int]) -> None:
+    assert translator.parse_page(identifier) == expected
+
+
+def test_a_page_uri_can_be_parsed_back() -> None:
+    uri = translator.unparse_page_uri("c57943", 26)
+
+    variant, identifier = translator.parse_uri(uri)
+
+    assert variant == "stations"
+    assert identifier is not None
+    assert translator.parse_page(identifier) == ("c57943", 26)
+
+
 def test_station_to_image_uses_https() -> None:
     station = {"image": "http://cdn-profiles.tunein.com/s1/images/logoq.jpg"}
 

@@ -23,6 +23,7 @@ type Variant = Literal[
     "category",
     "location",
     "section",
+    "stations",
     "related",
     "shows",
     "episodes",
@@ -61,6 +62,18 @@ def parse_uri(uri: str) -> tuple[Variant | None, str | None]:
     if variant not in VARIANTS:
         return None, None
     return variant, identifier or None
+
+
+def unparse_page_uri(guide_id: str, offset: int) -> Uri:
+    return unparse_uri("stations", f"{guide_id}_{offset}")
+
+
+def parse_page(identifier: str) -> tuple[str, int]:
+    guide_id, _, offset = identifier.partition("_")
+    try:
+        return guide_id, int(offset)
+    except ValueError:
+        return guide_id, 0
 
 
 def station_to_ref(station: TuneInItem) -> Ref:

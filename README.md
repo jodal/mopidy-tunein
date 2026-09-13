@@ -55,6 +55,13 @@ The following configuration values are available:
   comma separated latitude and longitude pair, e.g. `51.5,-0.13`. Leave it
   blank to let TuneIn choose the place from your IP address.
 
+## Usage
+
+Browse the "TuneIn" directory to find stations by category, by location, or
+among the ones that are popular now. TuneIn gives 25 stations at a time, so a
+category that holds more ends with a "More stations" entry that opens the next
+25.
+
 ## Known issues
 
 The following functionality is not implemented yet:
