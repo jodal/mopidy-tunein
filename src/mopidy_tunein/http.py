@@ -4,7 +4,6 @@ import logging
 import time
 
 import requests
-
 from mopidy import httpclient
 
 logger = logging.getLogger(__name__)

@@ -1,21 +1,19 @@
-import unittest
-
 from mopidy_tunein import Extension
 
 
-class ExtensionTest(unittest.TestCase):
-    def test_get_default_config(self):
-        ext = Extension()
+def test_get_default_config() -> None:
+    ext = Extension()
 
-        config = ext.get_default_config()
+    config = ext.get_default_config()
 
-        self.assertIn("[tunein]", config)
-        self.assertIn("enabled = true", config)
+    assert "[tunein]" in config
+    assert "enabled = true" in config
 
-    def test_get_config_schema(self):
-        ext = Extension()
 
-        schema = ext.get_config_schema()
+def test_get_config_schema() -> None:
+    ext = Extension()
 
-        self.assertIn("timeout", schema)
-        self.assertIn("filter", schema)
+    schema = ext.get_config_schema()
+
+    assert "timeout" in schema
+    assert "filter" in schema

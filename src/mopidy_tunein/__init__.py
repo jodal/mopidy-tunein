@@ -7,7 +7,6 @@ __version__ = version("mopidy-tunein")
 
 
 class Extension(ext.Extension):
-
     dist_name = "mopidy-tunein"
     ext_name = "tunein"
     version = __version__
@@ -18,12 +17,10 @@ class Extension(ext.Extension):
     def get_config_schema(self):
         schema = super().get_config_schema()
         schema["timeout"] = config.Integer(minimum=0)
-        schema["filter"] = config.String(
-            optional=True, choices=("station", "program")
-        )
+        schema["filter"] = config.String(optional=True, choices=("station", "program"))
         return schema
 
     def setup(self, registry):
-        from .actor import TuneInBackend
+        from .actor import TuneInBackend  # noqa: PLC0415
 
         registry.add("backend", TuneInBackend)
