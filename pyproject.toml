@@ -78,17 +78,11 @@ target-version = "py313"
 select = ["ALL"]
 ignore = [
     # Add rules you want to ignore here
-    "ANN001",  # missing-type-function-argument  # TODO
-    "ANN002",  # missing-type-args  # TODO
-    "ANN201",  # missing-return-type-undocumented-public-function  # TODO
-    "ANN202",  # missing-return-type-private-function  # TODO
-    "ANN204",  # missing-return-type-special-method  # TODO
     "BLE001",  # blind-except  # TODO
     "CPY",     # flake8-copyright
     "D",       # pydocstyle
     "D203",    # one-blank-line-before-class
     "D213",    # multi-line-summary-second-line
-    "FBT002",  # boolean-default-value-positional-argument
     "FIX002",  # line-contains-todo
     "G004",    # logging-f-string
     "PLW2901", # redefined-loop-name

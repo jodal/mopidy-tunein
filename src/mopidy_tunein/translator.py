@@ -1,26 +1,35 @@
+from __future__ import annotations
+
 import logging
 import re
+from typing import TYPE_CHECKING
 from urllib import request
 
 from mopidy.models import Album, Artist, Image, Ref, Track
+from mopidy.types import Uri
 
 from mopidy_tunein.tunein import TuneIn
+
+if TYPE_CHECKING:
+    from mopidy.types import Query, SearchField
+
+    from mopidy_tunein.tunein import TuneInItem
 
 logger = logging.getLogger(__name__)
 
 
-def unparse_uri(variant, identifier):
-    return f"tunein:{variant}:{identifier}"
+def unparse_uri(variant: str, identifier: str) -> Uri:
+    return Uri(f"tunein:{variant}:{identifier}")
 
 
-def parse_uri(uri):
+def parse_uri(uri: str) -> tuple[str | None, str | None]:
     result = re.findall(r"^tunein:([a-z]+)(?::(\w+))?$", uri)
     if result:
         return result[0]
     return None, None
 
 
-def station_to_ref(station):
+def station_to_ref(station: TuneInItem) -> Ref:
     if station["type"] != "audio":
         logger.debug(f"Expecting station but got {station['type']}")
     guide_id = station.get("guide_id", "??")
@@ -32,23 +41,23 @@ def station_to_ref(station):
     return Ref.track(uri=uri, name=name)
 
 
-def station_to_track(station):
+def station_to_track(station: TuneInItem) -> Track:
     ref = station_to_ref(station)
     return Track(
         uri=ref.uri,
         name=station.get("subtext", ref.name),
         album=Album(name=ref.name, uri=ref.uri),
-        artists=[Artist(name=ref.name, uri=ref.uri)],
+        artists=frozenset([Artist(name=ref.name, uri=ref.uri)]),
     )
 
 
-def station_to_image(station):
+def station_to_image(station: TuneInItem | None) -> Image | None:
     if station is not None and "image" in station:
         return Image(uri=station["image"])
     return None
 
 
-def show_to_ref(show):
+def show_to_ref(show: TuneInItem) -> Ref:
     if show["item"] != "show":
         logger.debug(f"Expecting show but got {show['item']}")
     uri = unparse_uri("episodes", show.get("guide_id", "??"))
@@ -56,12 +65,12 @@ def show_to_ref(show):
     return Ref.directory(uri=uri, name=name)
 
 
-def category_to_ref(category):
+def category_to_ref(category: TuneInItem) -> Ref:
     uri = unparse_uri("category", category["key"])
     return Ref.directory(uri=uri, name=category["text"])
 
 
-def section_to_ref(section, identifier=""):
+def section_to_ref(section: TuneInItem, identifier: str = "") -> Ref:
     if section.get("type", "link") == "audio":
         return station_to_ref(section)
     guide_id = section.get("guide_id", "??")
@@ -72,7 +81,7 @@ def section_to_ref(section, identifier=""):
     return Ref.directory(uri=uri, name=section["text"])
 
 
-def get_id_type(guide_id):
+def get_id_type(guide_id: str) -> str:
     return {
         "p": TuneIn.ID_PROGRAM,
         "s": TuneIn.ID_STATION,
@@ -86,9 +95,9 @@ def get_id_type(guide_id):
     }.get(guide_id[0], TuneIn.ID_UNKNOWN)
 
 
-def mopidy_to_tunein_query(mopidy_query):
+def mopidy_to_tunein_query(mopidy_query: Query[SearchField]) -> str:
     tunein_query = [
-        value
+        str(value)
         for field, values in mopidy_query.items()
         if field == "any"
         for value in values

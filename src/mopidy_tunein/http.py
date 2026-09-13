@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import requests
 from mopidy import httpclient
 
+if TYPE_CHECKING:
+    from mopidy.config import ProxyConfig
+
 logger = logging.getLogger(__name__)
 
 
-def get_requests_session(proxy_config, user_agent):
+def get_requests_session(
+    proxy_config: ProxyConfig,
+    user_agent: str,
+) -> requests.Session:
     session = requests.Session()
 
     if proxy := httpclient.format_proxy(proxy_config):
@@ -21,7 +28,12 @@ def get_requests_session(proxy_config, user_agent):
     return session
 
 
-def download(session, uri, timeout=1.0, chunk_size=4096):
+def download(
+    session: requests.Session,
+    uri: str,
+    timeout: float = 1.0,
+    chunk_size: int = 4096,
+) -> bytes | None:
     try:
         response = session.get(uri, stream=True, timeout=timeout)
     except requests.exceptions.Timeout:
