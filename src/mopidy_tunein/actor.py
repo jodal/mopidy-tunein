@@ -1,20 +1,31 @@
+from __future__ import annotations
+
 import logging
 import time
 import urllib.parse
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, override
 
 import pykka
 from mopidy import backend, exceptions
 from mopidy.audio import scan
 from mopidy.models import Ref, SearchResult
-from mopidy.types import UriScheme
+from mopidy.types import Uri, UriScheme
 
 from mopidy_tunein import Extension, http, parsers, translator, tunein
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    import requests
+    from mopidy.audio import AudioProxy
+    from mopidy.config import Config, ProxyConfig
+    from mopidy.models import Image, Track
+    from mopidy.types import Query, SearchField
 
 logger = logging.getLogger(__name__)
 
 
-def get_requests_session(proxy_config):
+def get_requests_session(proxy_config: ProxyConfig) -> requests.Session:
     user_agent = f"{Extension.dist_name}/{Extension.version}"
     return http.get_requests_session(proxy_config=proxy_config, user_agent=user_agent)
 
@@ -22,7 +33,7 @@ def get_requests_session(proxy_config):
 class TuneInBackend(pykka.ThreadingActor, backend.Backend):
     uri_schemes: ClassVar[list[UriScheme]] = [UriScheme("tunein")]
 
-    def __init__(self, config, audio):
+    def __init__(self, config: Config, audio: AudioProxy) -> None:
         super().__init__()
 
         self._session = get_requests_session(config["proxy"])
@@ -42,13 +53,15 @@ class TuneInBackend(pykka.ThreadingActor, backend.Backend):
 
 
 class TuneInLibrary(backend.LibraryProvider):
-    root_directory = Ref.directory(uri="tunein:root", name="TuneIn")
+    backend: TuneInBackend
+    root_directory = Ref.directory(uri=Uri("tunein:root"), name="TuneIn")
 
-    def __init__(self, backend):
+    def __init__(self, backend: TuneInBackend) -> None:
         super().__init__(backend)
 
-    def browse(self, uri):
-        result = []
+    @override
+    def browse(self, uri: Uri) -> list[Ref]:
+        result: list[Ref] = []
         variant, identifier = translator.parse_uri(uri)
         logger.debug(f"Browsing {uri!r}")
         if variant == "root":
@@ -73,11 +86,13 @@ class TuneInLibrary(backend.LibraryProvider):
         elif variant == "section" and identifier:
             if self.backend.tunein.related(identifier):
                 result.append(
-                    Ref.directory(uri=f"tunein:related:{identifier}", name="Related")
+                    Ref.directory(
+                        uri=Uri(f"tunein:related:{identifier}"), name="Related"
+                    )
                 )
             if self.backend.tunein.shows(identifier):
                 result.append(
-                    Ref.directory(uri=f"tunein:shows:{identifier}", name="Shows")
+                    Ref.directory(uri=Uri(f"tunein:shows:{identifier}"), name="Shows")
                 )
             result.extend(
                 translator.section_to_ref(station)
@@ -111,12 +126,14 @@ class TuneInLibrary(backend.LibraryProvider):
 
         return result
 
-    def refresh(self, uri=None):  # noqa: ARG002
+    @override
+    def refresh(self, uri: Uri | None = None) -> None:
         self.backend.tunein.reload()
 
-    def lookup(self, uri):
+    @override
+    def lookup(self, uri: Uri) -> list[Track]:
         variant, identifier = translator.parse_uri(uri)
-        if variant != "station":
+        if variant != "station" or identifier is None:
             return []
         station = self.backend.tunein.station(identifier)
         if not station:
@@ -125,11 +142,12 @@ class TuneInLibrary(backend.LibraryProvider):
         track = translator.station_to_track(station)
         return [track]
 
-    def get_images(self, uris):
-        results = {}
+    @override
+    def get_images(self, uris: Iterable[Uri]) -> dict[Uri, list[Image]]:
+        results: dict[Uri, list[Image]] = {}
         for uri in uris:
             variant, identifier = translator.parse_uri(uri)
-            if variant != "station":
+            if variant != "station" or identifier is None:
                 continue
             station = self.backend.tunein.station(identifier)
             image = translator.station_to_image(station)
@@ -137,44 +155,55 @@ class TuneInLibrary(backend.LibraryProvider):
                 results[uri] = [image]
         return results
 
-    def search(self, query=None, uris=None, exact=False):  # noqa: ARG002
+    @override
+    def search(
+        self,
+        query: Query[SearchField] | None = None,
+        uris: Iterable[Uri] | None = None,
+        exact: bool = False,
+    ) -> SearchResult | None:
         if query is None or not query:
             return None
         tunein_query = translator.mopidy_to_tunein_query(query)
-        tracks = []
-        for station in self.backend.tunein.search(tunein_query):
-            track = translator.station_to_track(station)
-            tracks.append(track)
-        return SearchResult(uri="tunein:search", tracks=tracks)
+        tracks = [
+            translator.station_to_track(station)
+            for station in self.backend.tunein.search(tunein_query)
+        ]
+        return SearchResult(uri=Uri("tunein:search"), tracks=tuple(tracks))
 
 
 class TuneInPlayback(backend.PlaybackProvider):
-    def __init__(self, audio, backend):
-        super().__init__(audio, backend)
-        self._stream_info = None
+    backend: TuneInBackend
 
-    def translate_uri(self, uri):
+    def __init__(self, audio: AudioProxy, backend: TuneInBackend) -> None:
+        super().__init__(audio, backend)
+        self._stream_info: scan._Result | None = None
+
+    @override
+    def translate_uri(self, uri: Uri) -> Uri | None:
         _variant, identifier = translator.parse_uri(uri)
+        if identifier is None:
+            return None
         station = self.backend.tunein.station(identifier)
         if not station:
             return None
         stream_uris = self.backend.tunein.tune(station)
         while stream_uris:
-            uri = stream_uris.pop(0)
-            logger.debug(f"Looking up URI: {uri!r}")
-            new_uri = self.unwrap_stream(uri)
+            stream_uri = Uri(stream_uris.pop(0))
+            logger.debug(f"Looking up URI: {stream_uri!r}")
+            new_uri = self.unwrap_stream(stream_uri)
             if new_uri:
                 return new_uri
             logger.debug("Mopidy translate_uri failed.")
-            new_uris = self.backend.tunein.parse_stream_url(uri)
-            if new_uris == [uri]:
-                logger.debug(f"Last attempt, play stream anyway: {uri!r}")
-                return uri
+            new_uris = self.backend.tunein.parse_stream_url(stream_uri)
+            if new_uris == [stream_uri]:
+                logger.debug(f"Last attempt, play stream anyway: {stream_uri!r}")
+                return stream_uri
             stream_uris.extend(new_uris)
         logger.debug("TuneIn lookup failed.")
         return None
 
-    def unwrap_stream(self, uri):
+    def unwrap_stream(self, uri: Uri) -> Uri | None:
         unwrapped_uri, self._stream_info = _unwrap_stream(
             uri,
             timeout=self.backend._timeout,
@@ -183,7 +212,8 @@ class TuneInPlayback(backend.PlaybackProvider):
         )
         return unwrapped_uri
 
-    def is_live(self, uri):
+    @override
+    def is_live(self, uri: Uri) -> bool:
         return (
             self._stream_info is not None
             and self._stream_info.uri == uri
@@ -193,7 +223,12 @@ class TuneInPlayback(backend.PlaybackProvider):
 
 
 # Shamelessly taken from mopidy.stream.actor
-def _unwrap_stream(uri, timeout, scanner, requests_session):  # noqa: PLR0911
+def _unwrap_stream(  # noqa: PLR0911
+    uri: Uri,
+    timeout: int,
+    scanner: scan.Scanner,
+    requests_session: requests.Session,
+) -> tuple[Uri | None, scan._Result | None]:
     """
     Get a stream URI from a playlist URI, ``uri``.
 
@@ -202,7 +237,7 @@ def _unwrap_stream(uri, timeout, scanner, requests_session):  # noqa: PLR0911
     """
 
     original_uri = uri
-    seen_uris = set()
+    seen_uris: set[Uri] = set()
     deadline = time.time() + timeout
 
     while time.time() < deadline:
@@ -263,6 +298,6 @@ def _unwrap_stream(uri, timeout, scanner, requests_session):  # noqa: PLR0911
 
         # TODO: Test streams and return first that seems to be playable
         logger.debug(f"Parsed playlist ({uri!r}) and found new URI: {uris[0]!r}")
-        uri = urllib.parse.urljoin(uri, uris[0])
+        uri = Uri(urllib.parse.urljoin(uri, uris[0]))
 
     return None, None

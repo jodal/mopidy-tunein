@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 from mopidy_tunein import tunein
 
 ASX = b"""<ASX version="3.0">
@@ -38,10 +40,10 @@ Ref3=http://tmp.com/baz
 
 
 class BasePlaylistAsx:
-    valid = None
+    valid: ClassVar[bytes] = b""
     parse = staticmethod(tunein.parse_asx)
 
-    def test_parse_valid_playlist(self):
+    def test_parse_valid_playlist(self) -> None:
         uris = list(self.parse(self.valid))
         expected = ["file:///tmp/foo", "file:///tmp/bar", "file:///tmp/baz"]
         assert uris == expected
@@ -62,7 +64,7 @@ class AsxOldPlaylistTest(BasePlaylistAsx):
 class TestPlaylist:
     parse = staticmethod(tunein.parse_asx)
 
-    def test_parse_asf_playlist(self):
+    def test_parse_asf_playlist(self) -> None:
         uris = list(self.parse(ASF_ASX))
         expected = [
             "mms://tmp.com/foo-mbr?mswmext=.asf",

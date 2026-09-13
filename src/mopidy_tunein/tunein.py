@@ -1,16 +1,25 @@
+from __future__ import annotations
+
 import configparser
 import io
 import logging
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Callable, Generator, Iterable
 from contextlib import closing
+from typing import Any
 from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+type TuneInItem = dict[str, Any]
+"""One category, section, show, or station from the TuneIn API."""
+
+type PlaylistParser = Callable[[bytes], Generator[str]]
 
 
 class PlaylistError(Exception):
@@ -20,17 +29,18 @@ class PlaylistError(Exception):
 class cache:  # noqa: N801
     # TODO: merge this to util library (copied from mopidy-spotify)
 
-    def __init__(self, ctl=0, ttl=3600):
-        self.cache = {}
+    def __init__(self, ctl: int = 0, ttl: int = 3600) -> None:
+        self.cache: dict[Any, tuple[Any, float]] = {}
         self.ctl = ctl
         self.ttl = ttl
         self._call_count = 0
 
-    def __call__(self, func):
-        def _memoized(*args):
+    def __call__[**P, R](self, func: Callable[P, R]) -> Callable[P, R]:
+        def _memoized(*args: P.args, **kwargs: P.kwargs) -> R:
             now = time.time()
+            key = (args, tuple(sorted(kwargs.items())))
             try:
-                value, last_update = self.cache[args]
+                value, last_update = self.cache[key]
                 age = now - last_update
                 if self._call_count > self.ctl or age > self.ttl:
                     self._call_count = 0
@@ -38,23 +48,22 @@ class cache:  # noqa: N801
                 if self.ctl:
                     self._call_count += 1
             except (KeyError, AttributeError):
-                value = func(*args)
+                value = func(*args, **kwargs)
                 if value:
-                    self.cache[args] = (value, now)
+                    self.cache[key] = (value, now)
                 return value
             except TypeError:
-                return func(*args)
+                return func(*args, **kwargs)
             else:
                 return value
 
-        def clear():
-            self.cache.clear()
-
-        _memoized.clear = clear
         return _memoized
 
+    def clear(self) -> None:
+        self.cache.clear()
 
-def parse_m3u(data):
+
+def parse_m3u(data: bytes) -> Generator[str]:
     # Copied from mopidy.audio.playlists
     # Mopidy version expects a header but it's not always present
     for line in data.splitlines():
@@ -69,7 +78,7 @@ def parse_m3u(data):
         yield line.strip()
 
 
-def parse_pls(data):
+def parse_pls(data: bytes) -> Generator[str]:
     # Copied from mopidy.audio.playlists
     try:
         cp = configparser.RawConfigParser(strict=False)
@@ -92,11 +101,11 @@ def parse_pls(data):
                 return
 
 
-def fix_asf_uri(uri):
+def fix_asf_uri(uri: str) -> str:
     return re.sub(r"http://(.+\?mswmext=\.asf)", r"mms://\1", uri, flags=re.IGNORECASE)
 
 
-def parse_old_asx(data):
+def parse_old_asx(data: bytes) -> Generator[str]:
     try:
         cp = configparser.RawConfigParser()
         cp.read_string(data.decode())
@@ -112,13 +121,16 @@ def parse_old_asx(data):
                 yield fix_asf_uri(uri.strip())
 
 
-def parse_new_asx(data):
+def parse_new_asx(data: bytes) -> Generator[str]:
     # Copied from mopidy.audio.playlists
+    element = None
     try:
         # Last element will be root.
         for _event, element in ET.iterparse(io.BytesIO(data)):
             element.tag = element.tag.lower()  # normalize
     except ET.ParseError:
+        return
+    if element is None:
         return
 
     for ref in element.findall("entry/ref[@href]"):
@@ -128,20 +140,23 @@ def parse_new_asx(data):
         yield fix_asf_uri(entry.get("href", "").strip())
 
 
-def parse_asx(data):
+def parse_asx(data: bytes) -> Generator[str]:
     if b"asx" in data[0:50].lower():
         return parse_new_asx(data)
     return parse_old_asx(data)
 
 
-def find_playlist_parser(extension, content_type):
-    extension_map = {
+def find_playlist_parser(
+    extension: str,
+    content_type: str | None,
+) -> PlaylistParser | None:
+    extension_map: dict[str, PlaylistParser] = {
         ".asx": parse_asx,
         ".wax": parse_asx,
         ".m3u": parse_m3u,
         ".pls": parse_pls,
     }
-    content_type_map = {
+    content_type_map: dict[str, PlaylistParser] = {
         "video/x-ms-asf": parse_asx,
         "application/x-mpegurl": parse_m3u,
         "audio/x-scpls": parse_pls,
@@ -170,7 +185,15 @@ class TuneIn:
     ID_STREAM = "stream"
     ID_UNKNOWN = "unknown"
 
-    def __init__(self, timeout, filter_=None, session=None):
+    _tunein_cache = cache()
+    _playlist_cache = cache()
+
+    def __init__(
+        self,
+        timeout: int,
+        filter_: str | None = None,
+        session: requests.Session | None = None,
+    ) -> None:
         self._base_uri = "https://opml.radiotime.com/%s"
         self._session = session or requests.Session()
         self._timeout = timeout / 1000.0
@@ -178,14 +201,14 @@ class TuneIn:
             self._filter = f"&filter={filter_[0]}"
         else:
             self._filter = ""
-        self._stations = {}
+        self._stations: dict[str, TuneInItem] = {}
 
-    def reload(self):
+    def reload(self) -> None:
         self._stations.clear()
-        self._tunein.clear()
-        self._get_playlist.clear()
+        self._tunein_cache.clear()
+        self._playlist_cache.clear()
 
-    def _flatten(self, data):
+    def _flatten(self, data: Iterable[TuneInItem]) -> list[TuneInItem]:
         results = []
         for item in data:
             if "children" in item:
@@ -194,10 +217,15 @@ class TuneIn:
                 results.append(item)
         return results
 
-    def _filter_results(self, data, section_name=None, map_func=None):
-        results = []
+    def _filter_results(
+        self,
+        data: Iterable[TuneInItem],
+        section_name: str | None = None,
+        map_func: Callable[[TuneInItem], TuneInItem] | None = None,
+    ) -> list[TuneInItem]:
+        results: list[TuneInItem] = []
 
-        def grab_item(item):
+        def grab_item(item: TuneInItem) -> None:
             if "guide_id" not in item:
                 return
             if map_func:
@@ -220,7 +248,7 @@ class TuneIn:
                 grab_item(item)
         return results
 
-    def categories(self, category=""):
+    def categories(self, category: str = "") -> list[TuneInItem]:
         if category == "location":
             args = "&id=r0"  # Annoying special case
         elif category == "language":
@@ -235,7 +263,7 @@ class TuneIn:
             # Flatten the results!
             results = self._filter_results(self._flatten(results))
         elif category == "":
-            trending = {
+            trending: TuneInItem = {
                 "text": "Trending",
                 "key": "trending",
                 "type": "link",
@@ -248,38 +276,38 @@ class TuneIn:
             results = self._filter_results(results)
         return results
 
-    def locations(self, location):
+    def locations(self, location: str) -> list[TuneInItem]:
         args = "&id=" + location
         results = self._tunein("Browse.ashx", args)
         # TODO: Support filters here
         return [x for x in results if x.get("type", "") == "link"]
 
-    def _browse(self, section_name, guide_id):
+    def _browse(self, section_name: str, guide_id: str) -> list[TuneInItem]:
         args = "&id=" + guide_id
         results = self._tunein("Browse.ashx", args)
         return self._filter_results(results, section_name)
 
-    def featured(self, guide_id):
+    def featured(self, guide_id: str) -> list[TuneInItem]:
         return self._browse("Featured", guide_id)
 
-    def local(self, guide_id):
+    def local(self, guide_id: str) -> list[TuneInItem]:
         return self._browse("Local", guide_id)
 
-    def stations(self, guide_id):
+    def stations(self, guide_id: str) -> list[TuneInItem]:
         return self._browse("Station", guide_id)
 
-    def related(self, guide_id):
+    def related(self, guide_id: str) -> list[TuneInItem]:
         return self._browse("Related", guide_id)
 
-    def shows(self, guide_id):
+    def shows(self, guide_id: str) -> list[TuneInItem]:
         return self._browse("Show", guide_id)
 
-    def episodes(self, guide_id):
+    def episodes(self, guide_id: str) -> list[TuneInItem]:
         args = f"&c=pbrowse&id={guide_id}"
         results = self._tunein("Tune.ashx", args)
         return self._filter_results(results, "Topic")
 
-    def _map_listing(self, listing):
+    def _map_listing(self, listing: TuneInItem) -> TuneInItem:
         # We've already checked 'guide_id' exists
         url_args = f"Tune.ashx?id={listing['guide_id']}"
         return {
@@ -291,7 +319,7 @@ class TuneIn:
             "URL": self._base_uri % url_args,
         }
 
-    def _station_info(self, station_id):
+    def _station_info(self, station_id: str) -> TuneInItem | None:
         logger.debug(f"Fetching info for station {station_id}")
         args = f"&c=composite&detail=listing&id={station_id}"
         results = self._tunein("Describe.ashx", args)
@@ -300,12 +328,12 @@ class TuneIn:
             return listings[0]
         return None
 
-    def parse_stream_url(self, url):
+    def parse_stream_url(self, url: str) -> list[str]:
         logger.debug(f"Extracting URIs from {url!r}")
         extension = urlparse(url).path[-4:]
         if extension in [".mp3", ".wma"]:
             return [url]  # Catch these easy ones
-        results = []
+        results: list[str] = []
         playlist_data, content_type = self._get_playlist(url)
         if playlist_data:
             parser = find_playlist_parser(extension, content_type)
@@ -322,10 +350,10 @@ class TuneIn:
         logger.debug(f"Got {results}")
         return list(OrderedDict.fromkeys(results))
 
-    def tune(self, station):
+    def tune(self, station: TuneInItem) -> list[str]:
         logger.debug(f"Tuning station id {station['guide_id']}")
         args = f"&id={station['guide_id']}"
-        stream_uris = [
+        stream_uris: list[str] = [
             stream["url"]
             for stream in self._tunein("Tune.ashx", args)
             if "url" in stream
@@ -334,7 +362,7 @@ class TuneIn:
             logger.error(f"Failed to tune station id {station['guide_id']}")
         return list(OrderedDict.fromkeys(stream_uris))
 
-    def station(self, station_id):
+    def station(self, station_id: str) -> TuneInItem | None:
         if station_id in self._stations:
             return self._stations[station_id]
         station = self._station_info(station_id)
@@ -342,7 +370,7 @@ class TuneIn:
             self._stations[station_id] = station
         return station
 
-    def search(self, query):
+    def search(self, query: str) -> list[TuneInItem]:
         if not query:
             logger.debug("Empty search query")
             return []
@@ -359,8 +387,8 @@ class TuneIn:
             self._stations[item["guide_id"]] = item
         return results
 
-    @cache()
-    def _tunein(self, variant, args):
+    @_tunein_cache
+    def _tunein(self, variant: str, args: str) -> list[TuneInItem]:
         uri = (self._base_uri % variant) + f"?render=json{args}"
         logger.debug(f"TuneIn request: {uri!r}")
         try:
@@ -369,10 +397,10 @@ class TuneIn:
                 return r.json()["body"]
         except Exception as e:
             logger.info(f"TuneIn API request for {variant} failed: {e}")
-        return {}
+        return []
 
-    @cache()
-    def _get_playlist(self, uri):
+    @_playlist_cache
+    def _get_playlist(self, uri: str) -> tuple[bytes | None, str | None]:
         data, content_type = None, None
         try:
             # Defer downloading the body until know it's not a stream

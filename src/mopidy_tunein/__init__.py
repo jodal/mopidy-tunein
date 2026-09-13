@@ -1,5 +1,6 @@
 import pathlib
 from importlib.metadata import version
+from typing import override
 
 from mopidy import config, ext
 
@@ -11,16 +12,19 @@ class Extension(ext.Extension):
     ext_name = "tunein"
     version = __version__
 
-    def get_default_config(self):
+    @override
+    def get_default_config(self) -> str:
         return config.read(pathlib.Path(__file__).parent / "ext.conf")
 
-    def get_config_schema(self):
+    @override
+    def get_config_schema(self) -> config.ConfigSchema:
         schema = super().get_config_schema()
         schema["timeout"] = config.Integer(minimum=0)
         schema["filter"] = config.String(optional=True, choices=("station", "program"))
         return schema
 
-    def setup(self, registry):
+    @override
+    def setup(self, registry: ext.Registry) -> None:
         from .actor import TuneInBackend  # noqa: PLC0415
 
         registry.add("backend", TuneInBackend)
