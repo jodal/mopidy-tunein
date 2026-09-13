@@ -78,17 +78,29 @@ target-version = "py313"
 select = ["ALL"]
 ignore = [
     # Add rules you want to ignore here
-    "CPY",   # flake8-copyright
-    "D",     # pydocstyle
-    "D203",  # one-blank-line-before-class
-    "D213",  # multi-line-summary-second-line
-    "G004",  # logging-f-string
-    "TD002", # missing-todo-author
-    "TD003", # missing-todo-link
+    "ANN001",  # missing-type-function-argument  # TODO
+    "ANN002",  # missing-type-args  # TODO
+    "ANN201",  # missing-return-type-undocumented-public-function  # TODO
+    "ANN202",  # missing-return-type-private-function  # TODO
+    "ANN204",  # missing-return-type-special-method  # TODO
+    "BLE001",  # blind-except  # TODO
+    "CPY",     # flake8-copyright
+    "D",       # pydocstyle
+    "D203",    # one-blank-line-before-class
+    "D213",    # multi-line-summary-second-line
+    "FBT002",  # boolean-default-value-positional-argument
+    "FIX002",  # line-contains-todo
+    "G004",    # logging-f-string
+    "PLW2901", # redefined-loop-name
+    "S314",    # suspicious-xml-element-tree-usage -- ElementTree is safe given expat >= 2.6.1
+    "SLF001",  # private-member-access  # TODO
+    "TD002",   # missing-todo-author
+    "TD003",   # missing-todo-link
+    "TRY400",  # error-instead-of-exception
     #
     # Conflicting with `ruff format`
-    "COM812", # missing-trailing-comma
-    "ISC001", # single-line-implicit-string-concatenation
+    "COM812",  # missing-trailing-comma
+    "ISC001",  # single-line-implicit-string-concatenation
 ]
 
 [tool.ruff.lint.per-file-ignores]
