@@ -9,7 +9,9 @@ import responses
 from mopidy_tunein import tunein
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
+
+type Parser = Callable[[bytes], Generator[str]]
 
 BASE = "https://opml.radiotime.com/"
 
@@ -419,6 +421,18 @@ def test_parse_stream_url_uses_a_stream_as_is(api: tunein.TuneIn) -> None:
 
 
 @responses.activate
+def test_parse_stream_url_falls_back_to_the_content_type(api: tunein.TuneIn) -> None:
+    responses.add(
+        responses.GET,
+        "http://a/listen",
+        body=b"[playlist]\nNumberOfEntries=1\nFile1=http://a/stream\n",
+        content_type="audio/x-scpls; charset=UTF-8",
+    )
+
+    assert api.parse_stream_url("http://a/listen") == ["http://a/stream"]
+
+
+@responses.activate
 def test_parse_stream_url_gives_no_results_for_a_malformed_playlist(
     api: tunein.TuneIn,
 ) -> None:
@@ -430,6 +444,65 @@ def test_parse_stream_url_gives_no_results_for_a_malformed_playlist(
     )
 
     assert api.parse_stream_url("http://a/b.pls") == []
+
+
+@pytest.mark.parametrize(
+    ("content_type", "expected"),
+    [
+        ("audio/x-scpls", "audio/x-scpls"),
+        ("audio/x-scpls; charset=UTF-8", "audio/x-scpls"),
+        ("Audio/X-SCPLS", "audio/x-scpls"),
+        ("  audio/mpeg ; charset=utf-8", "audio/mpeg"),
+        ("", ""),
+    ],
+)
+def test_media_type_drops_parameters(content_type: str, expected: str) -> None:
+    assert tunein.media_type(content_type) == expected
+
+
+@pytest.mark.parametrize(
+    ("extension", "expected"),
+    [
+        (".pls", tunein.parse_pls),
+        (".m3u", tunein.parse_m3u),
+        (".asx", tunein.parse_asx),
+        (".wax", tunein.parse_asx),
+        (".mp3", None),
+    ],
+)
+def test_find_playlist_parser_uses_the_extension_first(
+    extension: str, expected: Parser | None
+) -> None:
+    assert tunein.find_playlist_parser(extension, None) is expected
+
+
+@pytest.mark.parametrize(
+    ("content_type", "expected"),
+    [
+        # These are the content types the TuneIn servers were seen to send.
+        ("audio/x-scpls; charset=UTF-8", tunein.parse_pls),
+        ("audio/x-scpls", tunein.parse_pls),
+        ("audio/x-mpegurl", tunein.parse_m3u),
+        ("application/x-mpegurl", tunein.parse_m3u),
+        ("video/x-ms-asf", tunein.parse_asx),
+        ("text/html", None),
+        ("audio/mpeg", None),
+    ],
+)
+def test_find_playlist_parser_falls_back_to_the_content_type(
+    content_type: str, expected: Parser | None
+) -> None:
+    assert tunein.find_playlist_parser(".xxx", content_type) is expected
+
+
+def test_find_playlist_parser_prefers_the_extension() -> None:
+    parser = tunein.find_playlist_parser(".pls", "audio/x-mpegurl")
+
+    assert parser is tunein.parse_pls
+
+
+def test_find_playlist_parser_without_hints() -> None:
+    assert tunein.find_playlist_parser("", None) is None
 
 
 class EndlessResponse:
@@ -476,6 +549,20 @@ def test_get_playlist_skips_an_audio_body(api: tunein.TuneIn) -> None:
     responses.add(responses.GET, "http://a/s", body=b"audio", content_type="audio/mpeg")
 
     assert api._get_playlist("http://a/s") == (None, "audio/mpeg")
+
+
+@responses.activate
+def test_get_playlist_skips_an_audio_body_with_a_charset(api: tunein.TuneIn) -> None:
+    responses.add(
+        responses.GET,
+        "http://a/s",
+        body=b"audio",
+        content_type="audio/mpeg; charset=UTF-8",
+    )
+
+    data, _ = api._get_playlist("http://a/s")
+
+    assert data is None
 
 
 @responses.activate

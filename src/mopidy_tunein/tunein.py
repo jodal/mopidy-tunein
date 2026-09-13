@@ -176,6 +176,14 @@ def parse_asx(data: bytes) -> Generator[str]:
     return parse_old_asx(data)
 
 
+def media_type(content_type: str) -> str:
+    """Get the media type from a content type, without its parameters.
+
+    For example, "audio/x-scpls; charset=UTF-8" gives "audio/x-scpls".
+    """
+    return content_type.split(";", maxsplit=1)[0].strip().lower()
+
+
 def find_playlist_parser(
     extension: str,
     content_type: str | None,
@@ -189,6 +197,7 @@ def find_playlist_parser(
     content_type_map: dict[str, PlaylistParser] = {
         "video/x-ms-asf": parse_asx,
         "application/x-mpegurl": parse_m3u,
+        "audio/x-mpegurl": parse_m3u,
         "audio/x-scpls": parse_pls,
     }
 
@@ -197,7 +206,7 @@ def find_playlist_parser(
         # Annoying case where the url gave us no hints so try and work it out
         # from the header's content-type instead.
         # This might turn out to be server-specific...
-        parser = content_type_map.get(content_type.lower())
+        parser = content_type_map.get(media_type(content_type))
     return parser
 
 
@@ -440,7 +449,7 @@ class TuneIn:
                 r.raise_for_status()
                 content_type = r.headers.get("content-type", "audio/mpeg")
                 logger.debug(f"{uri} has content-type: {content_type}")
-                if content_type != "audio/mpeg":
+                if media_type(content_type) != "audio/mpeg":
                     data = read_playlist_body(r, self._timeout, PLAYLIST_MAX_BYTES)
         except Exception as e:
             logger.info(f"TuneIn playlist request for {uri} failed: {e}")
