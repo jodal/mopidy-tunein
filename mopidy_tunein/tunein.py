@@ -356,10 +356,10 @@ class TuneIn:
 
     def station(self, station_id):
         if station_id in self._stations:
-            station = self._stations[station_id]
-        else:
-            station = self._station_info(station_id)
-            self._stations["station_id"] = station
+            return self._stations[station_id]
+        station = self._station_info(station_id)
+        if station:
+            self._stations[station_id] = station
         return station
 
     def search(self, query):

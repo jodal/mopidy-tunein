@@ -214,10 +214,12 @@ def _unwrap_stream(uri, timeout, scanner, requests_session):
             scan_result = None
 
         if scan_result is not None:
-            if scan_result.playable or (
-                not scan_result.mime.startswith("text/")
+            has_interesting_mime = (
+                scan_result.mime is not None
+                and not scan_result.mime.startswith("text/")
                 and not scan_result.mime.startswith("application/")
-            ):
+            )
+            if scan_result.playable or has_interesting_mime:
                 logger.debug(
                     f"Unwrapped potential {scan_result.mime} stream: {uri!r}"
                 )
