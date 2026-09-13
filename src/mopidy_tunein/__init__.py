@@ -3,12 +3,12 @@ from importlib.metadata import version
 
 from mopidy import config, ext
 
-__version__ = version("Mopidy-TuneIn")
+__version__ = version("mopidy-tunein")
 
 
 class Extension(ext.Extension):
 
-    dist_name = "Mopidy-TuneIn"
+    dist_name = "mopidy-tunein"
     ext_name = "tunein"
     version = __version__
 
