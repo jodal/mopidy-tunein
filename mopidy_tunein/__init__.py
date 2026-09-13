@@ -1,9 +1,9 @@
 import pathlib
+from importlib.metadata import version
 
-import pkg_resources
 from mopidy import config, ext
 
-__version__ = pkg_resources.get_distribution("Mopidy-TuneIn").version
+__version__ = version("Mopidy-TuneIn")
 
 
 class Extension(ext.Extension):
