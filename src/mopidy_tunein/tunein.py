@@ -299,7 +299,7 @@ class TuneIn:
 
     def _map_listing(self, listing):
         # We've already checked 'guide_id' exists
-        url_args = f'Tune.ashx?id={listing["guide_id"]}'
+        url_args = f"Tune.ashx?id={listing['guide_id']}"
         return {
             "text": listing.get("name", "???"),
             "guide_id": listing["guide_id"],
@@ -328,30 +328,26 @@ class TuneIn:
             parser = find_playlist_parser(extension, content_type)
             if parser:
                 try:
-                    results = [
-                        u for u in parser(playlist_data) if u and u != url
-                    ]
+                    results = [u for u in parser(playlist_data) if u and u != url]
                 except Exception as e:
                     logger.error(f"TuneIn playlist parsing failed {e}")
                 if not results:
                     playlist_str = playlist_data.decode(errors="ignore")
-                    logger.debug(
-                        f"Parsing failure, malformed playlist: {playlist_str}"
-                    )
+                    logger.debug(f"Parsing failure, malformed playlist: {playlist_str}")
         elif content_type:
             results = [url]
         logger.debug(f"Got {results}")
         return list(OrderedDict.fromkeys(results))
 
     def tune(self, station):
-        logger.debug(f'Tuning station id {station["guide_id"]}')
-        args = f'&id={station["guide_id"]}'
+        logger.debug(f"Tuning station id {station['guide_id']}")
+        args = f"&id={station['guide_id']}"
         stream_uris = []
         for stream in self._tunein("Tune.ashx", args):
             if "url" in stream:
                 stream_uris.append(stream["url"])
         if not stream_uris:
-            logger.error(f'Failed to tune station id {station["guide_id"]}')
+            logger.error(f"Failed to tune station id {station['guide_id']}")
         return list(OrderedDict.fromkeys(stream_uris))
 
     def station(self, station_id):

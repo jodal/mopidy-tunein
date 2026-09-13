@@ -63,15 +63,11 @@ class TuneInLibrary(backend.LibraryProvider):
         elif variant == "section" and identifier:
             if self.backend.tunein.related(identifier):
                 result.append(
-                    Ref.directory(
-                        uri=f"tunein:related:{identifier}", name="Related"
-                    )
+                    Ref.directory(uri=f"tunein:related:{identifier}", name="Related")
                 )
             if self.backend.tunein.shows(identifier):
                 result.append(
-                    Ref.directory(
-                        uri=f"tunein:shows:{identifier}", name="Shows"
-                    )
+                    Ref.directory(uri=f"tunein:shows:{identifier}", name="Shows")
                 )
             for station in self.backend.tunein.featured(identifier):
                 result.append(translator.section_to_ref(station))
@@ -220,9 +216,7 @@ def _unwrap_stream(uri, timeout, scanner, requests_session):
                 and not scan_result.mime.startswith("application/")
             )
             if scan_result.playable or has_interesting_mime:
-                logger.debug(
-                    f"Unwrapped potential {scan_result.mime} stream: {uri!r}"
-                )
+                logger.debug(f"Unwrapped potential {scan_result.mime} stream: {uri!r}")
                 return uri, scan_result
 
         download_timeout = deadline - time.time()
@@ -243,13 +237,10 @@ def _unwrap_stream(uri, timeout, scanner, requests_session):
         uris = parsers.parse_playlist(content)
         if not uris:
             logger.debug(
-                f"Failed parsing URI ({uri!r}) as playlist; "
-                "found potential stream.",
+                f"Failed parsing URI ({uri!r}) as playlist; found potential stream.",
             )
             return uri, None
 
         # TODO Test streams and return first that seems to be playable
-        logger.debug(
-            f"Parsed playlist ({uri!r}) and found new URI: {uris[0]!r}"
-        )
+        logger.debug(f"Parsed playlist ({uri!r}) and found new URI: {uris[0]!r}")
         uri = urllib.parse.urljoin(uri, uris[0])

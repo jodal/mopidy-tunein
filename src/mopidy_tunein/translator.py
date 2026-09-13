@@ -22,13 +22,13 @@ def parse_uri(uri):
 
 def station_to_ref(station):
     if station["type"] != "audio":
-        logger.debug(f'Expecting station but got {station["type"]}')
+        logger.debug(f"Expecting station but got {station['type']}")
     guide_id = station.get("guide_id", "??")
     uri = unparse_uri("station", guide_id)
     name = station.get("text", station["URL"])
     # TODO: Should the name include 'now playing' for all stations?
     if get_id_type(guide_id) == TuneIn.ID_TOPIC:
-        name = f'{name} [{station.get("subtext", "??")}]'
+        name = f"{name} [{station.get('subtext', '??')}]"
     return Ref.track(uri=uri, name=name)
 
 
@@ -49,7 +49,7 @@ def station_to_image(station):
 
 def show_to_ref(show):
     if show["item"] != "show":
-        logger.debug(f'Expecting show but got {show["item"]}')
+        logger.debug(f"Expecting show but got {show['item']}")
     uri = unparse_uri("episodes", show.get("guide_id", "??"))
     name = show.get("text", show["URL"])
     return Ref.directory(uri=uri, name=name)
@@ -87,7 +87,7 @@ def get_id_type(guide_id):
 
 def mopidy_to_tunein_query(mopidy_query):
     tunein_query = []
-    for (field, values) in mopidy_query.items():
+    for field, values in mopidy_query.items():
         for value in values:
             if field == "any":
                 tunein_query.append(value)
