@@ -51,6 +51,9 @@ The following configuration values are available:
   formats. Defaults to `mp3, aac`. Set it to `mp3` if you do not have the
   GStreamer plugins for AAC. Mopidy plays the MP3 stream of a station when
   there is one, and uses AAC only for the stations that have no MP3 stream.
+- `tunein/location`: The place to use for the "Local Radio" category, as a
+  comma separated latitude and longitude pair, e.g. `51.5,-0.13`. Leave it
+  blank to let TuneIn choose the place from your IP address.
 
 ## Known issues
 
