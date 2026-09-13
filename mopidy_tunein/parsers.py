@@ -9,13 +9,14 @@ def parse_playlist(data: bytes) -> list[str]:
     handlers = {
         detect_extm3u_header: parse_extm3u,
         detect_pls_header: parse_pls,
+        detect_asx_reference_header: parse_asx_reference,
         detect_asx_header: parse_asx,
         detect_xspf_header: parse_xspf,
     }
     for detector, parser in handlers.items():
         if detector(data):
             return list(parser(data))
-    return list(parse_urilist(data))
+    return list(parse_urilist(data))  # Fallback
 
 
 def detect_extm3u_header(data: bytes) -> bool:
@@ -26,6 +27,10 @@ def detect_pls_header(data: bytes) -> bool:
     return data[0:10].lower() == b"[playlist]"
 
 
+def detect_asx_reference_header(data: bytes) -> bool:
+    return data[0:11].lower() == b"[reference]"
+
+
 def detect_xspf_header(data: bytes) -> bool:
     data = data[0:150]
     if b"xspf" not in data.lower():
@@ -33,7 +38,7 @@ def detect_xspf_header(data: bytes) -> bool:
 
     try:
         fh = io.BytesIO(data)
-        for _, element in ET.iterparse(fh, events=["start"]):
+        for _event, element in ET.iterparse(fh, events=["start"]):
             return element.tag.lower() == "{http://xspf.org/ns/0/}playlist"
     except ET.ParseError:
         pass
@@ -47,7 +52,7 @@ def detect_asx_header(data: bytes) -> bool:
 
     try:
         fh = io.BytesIO(data)
-        for _, element in ET.iterparse(fh, events=["start"]):
+        for _event, element in ET.iterparse(fh, events=["start"]):
             return element.tag.lower() == "asx"
     except ET.ParseError:
         pass
@@ -55,6 +60,7 @@ def detect_asx_header(data: bytes) -> bool:
 
 
 def parse_extm3u(data: bytes) -> Generator[str]:
+    # TODO: convert non URIs to file URIs.
     found_header = False
     for line in data.splitlines():
         if found_header or line.startswith(b"#EXTM3U"):
@@ -74,6 +80,7 @@ def parse_extm3u(data: bytes) -> Generator[str]:
 
 
 def parse_pls(data: bytes) -> Generator[str]:
+    # TODO: convert non URIs to file URIs.
     try:
         cp = configparser.RawConfigParser(strict=False)
         cp.read_string(data.decode())
@@ -83,15 +90,44 @@ def parse_pls(data: bytes) -> Generator[str]:
     for section in cp.sections():
         if section.lower() != "playlist":
             continue
-        for i in range(cp.getint(section, "numberofentries")):
-            yield cp.get(section, f"file{i + 1}").strip("\"'")
+        # Malformed playlists often declare a NumberOfEntries that does not
+        # match the File keys they have. Use the File keys instead.
+        entries = (
+            (int(option[4:]), cp.get(section, option))
+            for option in cp.options(section)
+            if option.startswith("file") and option[4:].isdigit()
+        )
+        for _index, entry in sorted(entries):
+            if uri := entry.strip("\"'"):
+                yield uri
+
+
+def parse_asx_reference(data: bytes) -> Generator[str]:
+    try:
+        cp = configparser.RawConfigParser(strict=False)
+        cp.read_string(data.decode())
+    except configparser.Error:
+        return
+
+    for section in cp.sections():
+        if section.lower() != "reference":
+            continue
+        references = (
+            (int(option[3:]), cp.get(section, option))
+            for option in cp.options(section)
+            if option.startswith("ref") and option[3:].isdigit()
+        )
+        for _index, reference in sorted(references):
+            if uri := reference.strip("\"'"):
+                yield uri
 
 
 def parse_xspf(data: bytes) -> Generator[str]:
     element = None
     try:
-        for _, element in ET.iterparse(io.BytesIO(data)):
-            element.tag = element.tag.lower()
+        # Last element will be root.
+        for _event, element in ET.iterparse(io.BytesIO(data)):
+            element.tag = element.tag.lower()  # normalize
     except ET.ParseError:
         return
     if element is None:
@@ -100,16 +136,16 @@ def parse_xspf(data: bytes) -> Generator[str]:
     ns = "http://xspf.org/ns/0/"
     path = f"{{{ns}}}tracklist/{{{ns}}}track"
     for track in element.iterfind(str(path)):
-        result = track.findtext(f"{{{ns}}}location")
-        if result:
+        if result := track.findtext(f"{{{ns}}}location"):
             yield result
 
 
 def parse_asx(data: bytes) -> Generator[str]:
     element = None
     try:
-        for _, element in ET.iterparse(io.BytesIO(data)):
-            element.tag = element.tag.lower()
+        # Last element will be root.
+        for _event, element in ET.iterparse(io.BytesIO(data)):
+            element.tag = element.tag.lower()  # normalize
     except ET.ParseError:
         return
     if element is None:
