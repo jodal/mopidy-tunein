@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import responses
 
 from mopidy_tunein import tunein
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 BASE = "https://opml.radiotime.com/"
 
@@ -429,6 +432,45 @@ def test_parse_stream_url_gives_no_results_for_a_malformed_playlist(
     assert api.parse_stream_url("http://a/b.pls") == []
 
 
+class EndlessResponse:
+    """Stands in for a live stream: a body that never ends."""
+
+    url = "http://a/stream"
+
+    def __init__(self) -> None:
+        self.chunks_read = 0
+
+    def iter_content(self, chunk_size: int) -> Generator[bytes]:
+        while True:
+            self.chunks_read += 1
+            yield b"x" * chunk_size
+
+
+def test_read_playlist_body_gives_up_on_an_endless_body() -> None:
+    response = EndlessResponse()
+
+    result = tunein.read_playlist_body(response, timeout=30, max_bytes=1024)  # type: ignore[arg-type]
+
+    assert result is None
+    assert response.chunks_read < 10  # Stopped early, did not run away.
+
+
+def test_read_playlist_body_gives_up_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = iter([0.0, 0.0, 100.0])
+    monkeypatch.setattr(tunein.time, "time", lambda: next(clock))
+    response = EndlessResponse()
+
+    result = tunein.read_playlist_body(
+        response,  # type: ignore[arg-type]
+        timeout=1,
+        max_bytes=1024 * 1024,
+    )
+
+    assert result is None
+
+
 @responses.activate
 def test_get_playlist_skips_an_audio_body(api: tunein.TuneIn) -> None:
     responses.add(responses.GET, "http://a/s", body=b"audio", content_type="audio/mpeg")
@@ -453,3 +495,34 @@ def test_get_playlist_failed_request_gives_nothing(api: tunein.TuneIn) -> None:
     responses.add(responses.GET, "http://a/p.pls", status=404)
 
     assert api._get_playlist("http://a/p.pls") == (None, None)
+
+
+@responses.activate
+def test_get_playlist_body_over_the_size_limit_is_not_a_playlist(
+    api: tunein.TuneIn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tunein, "PLAYLIST_MAX_BYTES", 1024)
+    responses.add(
+        responses.GET,
+        "http://a/stream",
+        body=b"x" * 4096,
+        content_type="audio/aac",
+    )
+
+    assert api._get_playlist("http://a/stream") == (None, "audio/aac")
+
+
+@responses.activate
+def test_get_playlist_body_under_the_size_limit_is_a_playlist(
+    api: tunein.TuneIn,
+) -> None:
+    responses.add(
+        responses.GET,
+        "http://a/p.pls",
+        body=b"[playlist]\nFile1=http://a/s\n",
+        content_type="audio/x-scpls",
+    )
+
+    data, _ = api._get_playlist("http://a/p.pls")
+
+    assert data == b"[playlist]\nFile1=http://a/s\n"

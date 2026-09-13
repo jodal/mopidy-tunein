@@ -21,9 +21,39 @@ type TuneInItem = dict[str, Any]
 
 type PlaylistParser = Callable[[bytes], Generator[str]]
 
+PLAYLIST_MAX_BYTES = 512 * 1024
+"""Anything larger than this is a stream, not a playlist."""
+
+PLAYLIST_CHUNK_SIZE = 8192
+
 
 class PlaylistError(Exception):
     pass
+
+
+def read_playlist_body(
+    response: requests.Response,
+    timeout: float,
+    max_bytes: int,
+) -> bytes | None:
+    """Read a playlist body, or give up if the URI turns out to be a stream.
+
+    A stream does not end, so stop at the first of the size limit and the
+    deadline, and report that there is no playlist to parse.
+    """
+    deadline = time.time() + timeout
+    chunks: list[bytes] = []
+    size = 0
+    for chunk in response.iter_content(PLAYLIST_CHUNK_SIZE):
+        chunks.append(chunk)
+        size += len(chunk)
+        if size > max_bytes:
+            logger.debug(f"Stopped reading {response.url} after {size} bytes")
+            return None
+        if time.time() > deadline:
+            logger.debug(f"Stopped reading {response.url} after {timeout}s")
+            return None
+    return b"".join(chunks)
 
 
 class cache:  # noqa: N801
@@ -411,7 +441,7 @@ class TuneIn:
                 content_type = r.headers.get("content-type", "audio/mpeg")
                 logger.debug(f"{uri} has content-type: {content_type}")
                 if content_type != "audio/mpeg":
-                    data = r.content
+                    data = read_playlist_body(r, self._timeout, PLAYLIST_MAX_BYTES)
         except Exception as e:
             logger.info(f"TuneIn playlist request for {uri} failed: {e}")
         return (data, content_type)
