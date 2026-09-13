@@ -80,6 +80,33 @@ DESCRIBE = [
     }
 ]
 
+DUAL_FORMAT_TUNE = [
+    {
+        "element": "audio",
+        "url": "http://a/aac-high",
+        "media_type": "aac",
+        "bitrate": 128,
+    },
+    {"element": "audio", "url": "http://a/mp3-low", "media_type": "mp3", "bitrate": 64},
+    {
+        "element": "audio",
+        "url": "http://a/mp3-high",
+        "media_type": "mp3",
+        "bitrate": 192,
+    },
+    {"element": "audio", "url": "http://a/aac-low", "media_type": "aac", "bitrate": 48},
+]
+
+PLACEHOLDER_TUNE = [
+    {
+        "element": "audio",
+        "url": "http://cdn-cms.tunein.com/service/Audio/notcompatible.enUS.mp3",
+        "media_type": "mp3",
+        "bitrate": 24,
+    },
+    {"element": "audio", "url": "http://a/real", "media_type": "aac", "bitrate": 64},
+]
+
 TUNE = [
     {"element": "audio", "url": "http://stream.example.com/one", "guide_id": "e1"},
     {"element": "audio", "url": "http://stream.example.com/two", "guide_id": "e2"},
@@ -338,6 +365,106 @@ def test_tune_returns_the_stream_urls_without_duplicates(api: tunein.TuneIn) -> 
         "http://stream.example.com/one",
         "http://stream.example.com/two",
     ]
+
+
+@responses.activate
+def test_tune_prefers_mp3_then_the_higher_bitrate() -> None:
+    api = tunein.TuneIn(timeout=1000, formats=["mp3", "aac"])
+    add_response("Tune.ashx", DUAL_FORMAT_TUNE)
+
+    assert api.tune({"guide_id": "s1"}) == [
+        "http://a/mp3-high",
+        "http://a/mp3-low",
+        "http://a/aac-high",
+        "http://a/aac-low",
+    ]
+
+
+@responses.activate
+def test_tune_keeps_an_aac_only_station(api: tunein.TuneIn) -> None:
+    add_response("Tune.ashx", [DUAL_FORMAT_TUNE[0], DUAL_FORMAT_TUNE[3]])
+
+    assert api.tune({"guide_id": "s1"}) == ["http://a/aac-high", "http://a/aac-low"]
+
+
+@responses.activate
+def test_tune_drops_the_not_compatible_recording(api: tunein.TuneIn) -> None:
+    add_response("Tune.ashx", PLACEHOLDER_TUNE)
+
+    assert api.tune({"guide_id": "s1"}) == ["http://a/real"]
+
+
+@responses.activate
+def test_tune_puts_an_unknown_format_last(api: tunein.TuneIn) -> None:
+    add_response(
+        "Tune.ashx",
+        [
+            {
+                "element": "audio",
+                "url": "http://a/wma",
+                "media_type": "wma",
+                "bitrate": 999,
+            },
+            {
+                "element": "audio",
+                "url": "http://a/aac",
+                "media_type": "aac",
+                "bitrate": 32,
+            },
+        ],
+    )
+
+    assert api.tune({"guide_id": "s1"}) == ["http://a/aac", "http://a/wma"]
+
+
+@pytest.mark.parametrize(
+    ("stream", "expected"),
+    [
+        ({"media_type": "mp3", "bitrate": 128}, (0, -128)),
+        ({"media_type": "aac", "bitrate": 64}, (1, -64)),
+        ({"media_type": "wma", "bitrate": 128}, (2, -128)),
+        ({"media_type": "mp3", "bitrate": "96"}, (0, -96)),
+        ({"media_type": "mp3"}, (0, 0)),
+        ({"media_type": "mp3", "bitrate": None}, (0, 0)),
+        ({"media_type": "mp3", "bitrate": "many"}, (0, 0)),
+        ({}, (2, 0)),
+    ],
+)
+def test_stream_priority(stream: dict[str, Any], expected: tuple[int, int]) -> None:
+    assert tunein.stream_priority(stream) == expected
+
+
+@responses.activate
+def test_formats_are_sent_with_browse_search_and_tune() -> None:
+    api = tunein.TuneIn(timeout=1000, formats=["mp3", "aac"])
+    add_response("Browse.ashx", [])
+    add_response("Search.ashx", [])
+    add_response("Tune.ashx", [])
+
+    api.stations("c1")
+    api.search("bbc")
+    api.tune({"guide_id": "s1"})
+
+    assert all("formats=mp3,aac" in request_url(i) for i in range(3))
+
+
+@responses.activate
+def test_formats_are_not_sent_when_not_configured(api: tunein.TuneIn) -> None:
+    add_response("Browse.ashx", [])
+
+    api.stations("c1")
+
+    assert "formats=" not in request_url()
+
+
+@responses.activate
+def test_formats_are_not_sent_when_describing_a_station() -> None:
+    api = tunein.TuneIn(timeout=1000, formats=["mp3", "aac"])
+    add_response("Describe.ashx", DESCRIBE)
+
+    api.station("s24791")
+
+    assert "formats=" not in request_url()
 
 
 @responses.activate

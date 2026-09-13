@@ -21,10 +21,11 @@ python3 -m pip install mopidy-tunein
 
 See https://mopidy.com/ext/tunein/ for alternative installation methods.
 
-Almost all stations stream MP3, which the GStreamer plugins that Mopidy
-already needs can decode. To also play the stations that stream AAC, install
+Most stations stream MP3, which the GStreamer plugins that Mopidy already
+needs can decode. Some stations only stream AAC. To play those, install
 `gstreamer1.0-plugins-bad` or `gstreamer1.0-libav`, or the packages that hold
-these GStreamer plugin sets on your system.
+these GStreamer plugin sets on your system. If you do not want the AAC
+stations at all, see the `tunein/formats` config value below.
 
 ## Configuration
 
@@ -34,6 +35,7 @@ required, but you can add this to your Mopidy configuration file:
 ```ini
 [tunein]
 timeout = 5000
+formats = mp3, aac
 ```
 
 The following configuration values are available:
@@ -44,6 +46,11 @@ The following configuration values are available:
   blank to turn off filtering. Defaults to blank.
 - `tunein/timeout`: Milliseconds before giving up waiting for results. Defaults
   to `5000`.
+- `tunein/formats`: The stream formats to ask TuneIn for, as a comma separated
+  list. TuneIn leaves out the stations that it cannot give you in any of these
+  formats. Defaults to `mp3, aac`. Set it to `mp3` if you do not have the
+  GStreamer plugins for AAC. Mopidy plays the MP3 stream of a station when
+  there is one, and uses AAC only for the stations that have no MP3 stream.
 
 ## Known issues
 
