@@ -63,70 +63,95 @@ class TuneInLibrary(backend.LibraryProvider):
 
     @override
     def browse(self, uri: Uri) -> list[Ref]:
-        result: list[Ref] = []
         variant, identifier = translator.parse_uri(uri)
         logger.debug(f"Browsing {uri!r}")
         if variant == "root":
-            result.extend(
-                translator.category_to_ref(category)
-                for category in self.backend.tunein.categories()
-            )
-        elif variant == "category" and identifier:
-            result.extend(
-                translator.section_to_ref(section, identifier)
-                for section in self.backend.tunein.categories(identifier)
-            )
-        elif variant == "location" and identifier:
-            result.extend(
-                translator.section_to_ref(location, "local")
-                for location in self.backend.tunein.locations(identifier)
-            )
-            result.extend(
-                translator.station_to_ref(station)
-                for station in self.backend.tunein.stations(identifier)
-            )
-        elif variant == "section" and identifier:
-            if self.backend.tunein.related(identifier):
-                result.append(
-                    Ref.directory(
-                        uri=Uri(f"tunein:related:{identifier}"), name="Related"
-                    )
-                )
-            if self.backend.tunein.shows(identifier):
-                result.append(
-                    Ref.directory(uri=Uri(f"tunein:shows:{identifier}"), name="Shows")
-                )
-            result.extend(
-                translator.section_to_ref(station)
-                for station in self.backend.tunein.featured(identifier)
-            )
-            result.extend(
-                translator.station_to_ref(station)
-                for station in self.backend.tunein.local(identifier)
-            )
-            result.extend(
-                translator.station_to_ref(station)
-                for station in self.backend.tunein.stations(identifier)
-            )
-        elif variant == "related" and identifier:
-            result.extend(
-                translator.section_to_ref(section)
-                for section in self.backend.tunein.related(identifier)
-            )
-        elif variant == "shows" and identifier:
-            result.extend(
-                translator.show_to_ref(show)
-                for show in self.backend.tunein.shows(identifier)
-            )
-        elif variant == "episodes" and identifier:
-            result.extend(
-                translator.station_to_ref(episode)
-                for episode in self.backend.tunein.episodes(identifier)
-            )
-        else:
-            logger.debug(f"Unknown URI: {uri!r}")
+            return self._browse_root()
+        if variant is None or variant == "station" or identifier is None:
+            # A station is a track, so there is nothing to browse.
+            logger.debug(f"Cannot browse URI: {uri!r}")
+            return []
+        # pyright checks that every variant has a case here, because it
+        # reports refs as possibly unbound when one is missing.
+        match variant:
+            case "category":
+                refs = self._browse_category(identifier)
+            case "location":
+                refs = self._browse_location(identifier)
+            case "section":
+                refs = self._browse_section(identifier)
+            case "related":
+                refs = self._browse_related(identifier)
+            case "shows":
+                refs = self._browse_shows(identifier)
+            case "episodes":
+                refs = self._browse_episodes(identifier)
+        return refs
 
+    def _browse_root(self) -> list[Ref]:
+        return [
+            translator.category_to_ref(category)
+            for category in self.backend.tunein.categories()
+        ]
+
+    def _browse_category(self, identifier: str) -> list[Ref]:
+        return [
+            translator.section_to_ref(section, identifier)
+            for section in self.backend.tunein.categories(identifier)
+        ]
+
+    def _browse_location(self, identifier: str) -> list[Ref]:
+        result = [
+            translator.section_to_ref(location, "local")
+            for location in self.backend.tunein.locations(identifier)
+        ]
+        result.extend(
+            translator.station_to_ref(station)
+            for station in self.backend.tunein.stations(identifier)
+        )
         return result
+
+    def _browse_section(self, identifier: str) -> list[Ref]:
+        result: list[Ref] = []
+        if self.backend.tunein.related(identifier):
+            result.append(
+                Ref.directory(uri=Uri(f"tunein:related:{identifier}"), name="Related")
+            )
+        if self.backend.tunein.shows(identifier):
+            result.append(
+                Ref.directory(uri=Uri(f"tunein:shows:{identifier}"), name="Shows")
+            )
+        result.extend(
+            translator.section_to_ref(station)
+            for station in self.backend.tunein.featured(identifier)
+        )
+        result.extend(
+            translator.station_to_ref(station)
+            for station in self.backend.tunein.local(identifier)
+        )
+        result.extend(
+            translator.station_to_ref(station)
+            for station in self.backend.tunein.stations(identifier)
+        )
+        return result
+
+    def _browse_related(self, identifier: str) -> list[Ref]:
+        return [
+            translator.section_to_ref(section)
+            for section in self.backend.tunein.related(identifier)
+        ]
+
+    def _browse_shows(self, identifier: str) -> list[Ref]:
+        return [
+            translator.show_to_ref(show)
+            for show in self.backend.tunein.shows(identifier)
+        ]
+
+    def _browse_episodes(self, identifier: str) -> list[Ref]:
+        return [
+            translator.station_to_ref(episode)
+            for episode in self.backend.tunein.episodes(identifier)
+        ]
 
     @override
     def refresh(self, uri: Uri | None = None) -> None:
