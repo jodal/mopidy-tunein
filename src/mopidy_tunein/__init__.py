@@ -21,6 +21,7 @@ class Extension(ext.Extension):
         schema = super().get_config_schema()
         schema["timeout"] = config.Integer(minimum=0)
         schema["filter"] = config.String(optional=True, choices=("station", "program"))
+        schema["formats"] = config.List(optional=True)
         return schema
 
     @override

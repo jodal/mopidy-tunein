@@ -26,6 +26,15 @@ PLAYLIST_MAX_BYTES = 512 * 1024
 
 PLAYLIST_CHUNK_SIZE = 8192
 
+FORMAT_ARG_VARIANTS = ("Browse.ashx", "Search.ashx", "Tune.ashx")
+"""The API requests that honour the formats argument."""
+
+FORMAT_PRIORITY = ("mp3", "aac")
+"""Stream formats, best first. Anything else goes last."""
+
+PLACEHOLDER_STREAM = "notcompatible"
+"""TuneIn answers with this recording for a station it cannot serve."""
+
 
 class PlaylistError(Exception):
     pass
@@ -176,6 +185,25 @@ def parse_asx(data: bytes) -> Generator[str]:
     return parse_old_asx(data)
 
 
+def stream_priority(stream: TuneInItem) -> tuple[int, int]:
+    """Order a station's streams, best first.
+
+    Prefer the format over the bitrate. Mopidy keeps the first stream that
+    it can open, so it cannot go back to another one, and MP3 plays with the
+    GStreamer plugins that Mopidy already asks for, while AAC does not. MP3
+    is also the higher bitrate for most stations that give both.
+    """
+    try:
+        rank = FORMAT_PRIORITY.index(stream.get("media_type", ""))
+    except ValueError:
+        rank = len(FORMAT_PRIORITY)
+    try:
+        bitrate = int(stream.get("bitrate") or 0)
+    except (TypeError, ValueError):
+        bitrate = 0
+    return (rank, -bitrate)
+
+
 def media_type(content_type: str) -> str:
     """Get the media type from a content type, without its parameters.
 
@@ -231,6 +259,7 @@ class TuneIn:
         self,
         timeout: int,
         filter_: str | None = None,
+        formats: Iterable[str] | None = None,
         session: requests.Session | None = None,
     ) -> None:
         self._base_uri = "https://opml.radiotime.com/%s"
@@ -240,6 +269,7 @@ class TuneIn:
             self._filter = f"&filter={filter_[0]}"
         else:
             self._filter = ""
+        self._formats = f"&formats={','.join(formats)}" if formats else ""
         self._stations: dict[str, TuneInItem] = {}
 
     def reload(self) -> None:
@@ -392,11 +422,13 @@ class TuneIn:
     def tune(self, station: TuneInItem) -> list[str]:
         logger.debug(f"Tuning station id {station['guide_id']}")
         args = f"&id={station['guide_id']}"
-        stream_uris: list[str] = [
-            stream["url"]
+        streams = [
+            stream
             for stream in self._tunein("Tune.ashx", args)
-            if "url" in stream
+            if "url" in stream and PLACEHOLDER_STREAM not in stream["url"]
         ]
+        streams.sort(key=stream_priority)
+        stream_uris = [stream["url"] for stream in streams]
         if not stream_uris:
             logger.error(f"Failed to tune station id {station['guide_id']}")
         return list(OrderedDict.fromkeys(stream_uris))
@@ -428,6 +460,8 @@ class TuneIn:
 
     @_tunein_cache
     def _tunein(self, variant: str, args: str) -> list[TuneInItem]:
+        if variant in FORMAT_ARG_VARIANTS:
+            args += self._formats
         uri = (self._base_uri % variant) + f"?render=json{args}"
         logger.debug(f"TuneIn request: {uri!r}")
         try:

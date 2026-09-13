@@ -44,9 +44,10 @@ class TuneInBackend(pykka.ThreadingActor, backend.Backend):
             timeout=config["tunein"]["timeout"], proxy_config=config["proxy"]
         )
         self.tunein = tunein.TuneIn(
-            config["tunein"]["timeout"],
-            config["tunein"]["filter"],
-            self._session,
+            timeout=config["tunein"]["timeout"],
+            filter_=config["tunein"]["filter"],
+            formats=config["tunein"]["formats"],
+            session=self._session,
         )
         self.library = TuneInLibrary(self)
         self.playback = TuneInPlayback(audio=audio, backend=self)
