@@ -7,12 +7,11 @@ import re
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Generator, Iterable
-from contextlib import closing
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from xml.etree import ElementTree as ET
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ class PlaylistError(Exception):
 
 
 def read_playlist_body(
-    response: requests.Response,
+    response: httpx.Response,
     timeout: float,
     max_bytes: int,
 ) -> bytes | None:
@@ -53,7 +52,7 @@ def read_playlist_body(
     deadline = time.time() + timeout
     chunks: list[bytes] = []
     size = 0
-    for chunk in response.iter_content(PLAYLIST_CHUNK_SIZE):
+    for chunk in response.iter_bytes(PLAYLIST_CHUNK_SIZE):
         chunks.append(chunk)
         size += len(chunk)
         if size > max_bytes:
@@ -269,10 +268,10 @@ class TuneIn:
         filter_: str | None = None,
         formats: Iterable[str] | None = None,
         location: str | None = None,
-        session: requests.Session | None = None,
+        client: httpx.Client | None = None,
     ) -> None:
         self._base_uri = "https://opml.radiotime.com/%s"
-        self._session = session or requests.Session()
+        self._client = client or httpx.Client(follow_redirects=True)
         self._timeout = timeout / 1000.0
         if filter_ in [TuneIn.ID_PROGRAM, TuneIn.ID_STATION]:
             self._filter = f"&filter={filter_[0]}"
@@ -490,9 +489,9 @@ class TuneIn:
         uri = (self._base_uri % variant) + f"?render=json{args}"
         logger.debug(f"TuneIn request: {uri!r}")
         try:
-            with closing(self._session.get(uri, timeout=self._timeout)) as r:
-                r.raise_for_status()
-                return r.json()["body"]
+            r = self._client.get(uri, timeout=self._timeout)
+            r.raise_for_status()
+            return r.json()["body"]
         except Exception as e:
             logger.info(f"TuneIn API request for {variant} failed: {e}")
         return []
@@ -507,9 +506,7 @@ class TuneIn:
         data, content_type = None, None
         try:
             # Defer downloading the body until know it's not a stream
-            with closing(
-                self._session.get(uri, timeout=self._timeout, stream=True)
-            ) as r:
+            with self._client.stream("GET", uri, timeout=self._timeout) as r:
                 r.raise_for_status()
                 content_type = r.headers.get("content-type", "audio/mpeg")
                 logger.debug(f"{uri} has content-type: {content_type}")

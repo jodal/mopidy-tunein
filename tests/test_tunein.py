@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
-import responses
 
 from mopidy_tunein import tunein
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
+
+    from pytest_httpx import HTTPXMock
 
 type Parser = Callable[[bytes], Generator[str]]
 
@@ -153,14 +156,26 @@ def api() -> tunein.TuneIn:
     return tunein.TuneIn(timeout=1000)
 
 
-def add_response(variant: str, body: Any, **kwargs: Any) -> None:  # noqa: ANN401
-    responses.add(responses.GET, BASE + variant, json=api_body(body), **kwargs)
+def api_url(variant: str) -> re.Pattern[str]:
+    """Match an API request whatever query string it carries."""
+    return re.compile(rf"^{re.escape(BASE + variant)}\?")
 
 
-def request_url(index: int = 0) -> str:
-    url = responses.calls[index].request.url
-    assert url is not None
-    return url
+def add_response(
+    httpx_mock: HTTPXMock,
+    variant: str,
+    body: Any,  # noqa: ANN401
+    **kwargs: Any,  # noqa: ANN401
+) -> None:
+    httpx_mock.add_response(
+        url=api_url(variant),
+        json=api_body(body),
+        **kwargs,
+    )
+
+
+def request_url(httpx_mock: HTTPXMock, index: int = 0) -> str:
+    return str(httpx_mock.get_requests()[index].url)
 
 
 def test_no_filter_by_default(api: tunein.TuneIn) -> None:
@@ -179,71 +194,73 @@ def test_unknown_filter_is_ignored() -> None:
     assert tunein.TuneIn(1000, "nonsense")._filter == ""
 
 
-@responses.activate
-def test_request_returns_the_body(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", ROOT)
+def test_request_returns_the_body(api: tunein.TuneIn, httpx_mock: HTTPXMock) -> None:
+    add_response(httpx_mock, "Browse.ashx", ROOT)
 
     assert api._tunein("Browse.ashx", "&c=music") == ROOT
 
 
-@responses.activate
-def test_request_sends_the_expected_query(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", ROOT)
+def test_request_sends_the_expected_query(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", ROOT)
 
     api._tunein("Browse.ashx", "&c=music")
 
-    assert request_url() == BASE + "Browse.ashx?render=json&c=music"
+    assert request_url(httpx_mock) == BASE + "Browse.ashx?render=json&c=music"
 
 
-@responses.activate
-def test_request_http_error_gives_no_results(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", ROOT, status=500)
-
-    assert api._tunein("Browse.ashx", "") == []
-
-
-@responses.activate
-def test_request_connection_error_gives_no_results(api: tunein.TuneIn) -> None:
-    responses.add(responses.GET, BASE + "Browse.ashx", body=OSError("boom"))
+def test_request_http_error_gives_no_results(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", ROOT, status_code=500)
 
     assert api._tunein("Browse.ashx", "") == []
 
 
-@responses.activate
-def test_request_result_is_cached(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", ROOT)
+def test_request_connection_error_gives_no_results(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_exception(httpx.ConnectError("boom"), url=api_url("Browse.ashx"))
+
+    assert api._tunein("Browse.ashx", "") == []
+
+
+def test_request_result_is_cached(api: tunein.TuneIn, httpx_mock: HTTPXMock) -> None:
+    add_response(httpx_mock, "Browse.ashx", ROOT)
 
     api._tunein("Browse.ashx", "")
     api._tunein("Browse.ashx", "")
 
-    assert len(responses.calls) == 1
+    assert len(httpx_mock.get_requests()) == 1
 
 
-@responses.activate
-def test_reload_clears_the_request_cache(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", ROOT)
+def test_reload_clears_the_request_cache(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", ROOT, is_reusable=True)
 
     api._tunein("Browse.ashx", "")
     api.reload()
     api._tunein("Browse.ashx", "")
 
-    assert len(responses.calls) == 2
+    assert len(httpx_mock.get_requests()) == 2
 
 
-@responses.activate
 def test_categories_root_appends_trending_and_drops_language(
-    api: tunein.TuneIn,
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
 ) -> None:
-    add_response("Browse.ashx", ROOT)
+    add_response(httpx_mock, "Browse.ashx", ROOT)
 
     keys = [c["key"] for c in api.categories()]
 
     assert keys == ["local", "music", "trending"]
 
 
-@responses.activate
-def test_categories_root_does_not_modify_the_cached_data(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", ROOT)
+def test_categories_root_does_not_modify_the_cached_data(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", ROOT)
 
     first = api.categories()
     second = api.categories()
@@ -251,62 +268,65 @@ def test_categories_root_does_not_modify_the_cached_data(api: tunein.TuneIn) -> 
     assert first == second
 
 
-@responses.activate
-def test_categories_language_is_not_requested(api: tunein.TuneIn) -> None:
+def test_categories_language_is_not_requested(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
     assert api.categories("language") == []
-    assert not responses.calls
+    assert not httpx_mock.get_requests()
 
 
-@responses.activate
-def test_categories_local_sends_the_configured_location() -> None:
+def test_categories_local_sends_the_configured_location(httpx_mock: HTTPXMock) -> None:
     api = tunein.TuneIn(timeout=1000, location="51.5,-0.13")
-    add_response("Browse.ashx", [])
+    add_response(httpx_mock, "Browse.ashx", [])
 
     api.categories("local")
 
-    assert "latlon=51.5,-0.13" in request_url()
+    assert "latlon=51.5,-0.13" in request_url(httpx_mock)
 
 
-@responses.activate
-def test_categories_local_without_a_location(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", [])
+def test_categories_local_without_a_location(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", [])
 
     api.categories("local")
 
-    assert "latlon=" not in request_url()
+    assert "latlon=" not in request_url(httpx_mock)
 
 
-@responses.activate
-def test_the_location_is_only_for_local_radio() -> None:
+def test_the_location_is_only_for_local_radio(httpx_mock: HTTPXMock) -> None:
     api = tunein.TuneIn(timeout=1000, location="51.5,-0.13")
-    add_response("Browse.ashx", [])
+    add_response(httpx_mock, "Browse.ashx", [])
 
     api.categories("music")
 
-    assert "latlon=" not in request_url()
+    assert "latlon=" not in request_url(httpx_mock)
 
 
-@responses.activate
-def test_categories_location_uses_the_root_region(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", [SECTION_LINK])
+def test_categories_location_uses_the_root_region(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", [SECTION_LINK])
 
     api.categories("location")
 
-    assert "id=r0" in request_url()
+    assert "id=r0" in request_url(httpx_mock)
 
 
-@responses.activate
-def test_categories_podcast_is_flattened(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", STATIONS_SECTION)
+def test_categories_podcast_is_flattened(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", STATIONS_SECTION)
 
     result = api.categories("podcast")
 
     assert [s["guide_id"] for s in result] == ["s128641", "s346757", "s346757"]
 
 
-@responses.activate
-def test_stations_returns_the_matching_section(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", STATIONS_SECTION)
+def test_stations_returns_the_matching_section(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", STATIONS_SECTION)
 
     result = api.stations("c1")
 
@@ -327,69 +347,76 @@ def test_page_offset(uri: str, expected: int | None) -> None:
     assert tunein.page_offset(uri) == expected
 
 
-@responses.activate
-def test_next_stations_offset_finds_the_link(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", PAGED_SECTION)
+def test_next_stations_offset_finds_the_link(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", PAGED_SECTION)
 
     assert api.next_stations_offset("c1") == 26
 
 
-@responses.activate
-def test_next_stations_offset_without_a_link(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", STATIONS_SECTION)
+def test_next_stations_offset_without_a_link(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", STATIONS_SECTION)
 
     assert api.next_stations_offset("c1") is None
 
 
-@responses.activate
-def test_the_next_page_link_is_not_a_station(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", PAGED_SECTION)
+def test_the_next_page_link_is_not_a_station(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", PAGED_SECTION)
 
     assert [s["guide_id"] for s in api.stations("c1")] == ["s128641", "s346757"]
 
 
-@responses.activate
-def test_stations_asks_for_the_given_page(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", PAGED_SECTION)
+def test_stations_asks_for_the_given_page(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", PAGED_SECTION)
 
     api.stations("c1", offset=26)
 
-    assert "offset=26" in request_url()
+    assert "offset=26" in request_url(httpx_mock)
 
 
-@responses.activate
-def test_stations_asks_for_no_offset_on_the_first_page(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", PAGED_SECTION)
+def test_stations_asks_for_no_offset_on_the_first_page(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", PAGED_SECTION)
 
     api.stations("c1")
 
-    assert "offset=" not in request_url()
+    assert "offset=" not in request_url(httpx_mock)
 
 
-@responses.activate
-def test_local_returns_the_matching_section(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", STATIONS_SECTION)
+def test_local_returns_the_matching_section(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", STATIONS_SECTION)
 
     assert [s["guide_id"] for s in api.local("c1")] == ["s346757"]
 
 
-@responses.activate
-def test_browse_unmatched_section_is_empty(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", STATIONS_SECTION)
+def test_browse_unmatched_section_is_empty(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", STATIONS_SECTION)
 
     assert api.shows("c1") == []
 
 
-@responses.activate
-def test_locations_keeps_only_links(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", [SECTION_LINK, STATION_ONE])
+def test_locations_keeps_only_links(api: tunein.TuneIn, httpx_mock: HTTPXMock) -> None:
+    add_response(httpx_mock, "Browse.ashx", [SECTION_LINK, STATION_ONE])
 
     assert api.locations("r0") == [SECTION_LINK]
 
 
-@responses.activate
-def test_browse_fills_the_station_cache(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", STATIONS_SECTION)
+def test_browse_fills_the_station_cache(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", STATIONS_SECTION)
 
     api.stations("c1")
 
@@ -410,9 +437,8 @@ def test_flatten_keeps_childless_items(api: tunein.TuneIn) -> None:
     assert api._flatten([STATION_ONE]) == [STATION_ONE]
 
 
-@responses.activate
-def test_station_maps_the_listing(api: tunein.TuneIn) -> None:
-    add_response("Describe.ashx", DESCRIBE)
+def test_station_maps_the_listing(api: tunein.TuneIn, httpx_mock: HTTPXMock) -> None:
+    add_response(httpx_mock, "Describe.ashx", DESCRIBE)
 
     station = api.station("s24791")
 
@@ -426,9 +452,10 @@ def test_station_maps_the_listing(api: tunein.TuneIn) -> None:
     }
 
 
-@responses.activate
-def test_station_is_cached_after_the_first_lookup(api: tunein.TuneIn) -> None:
-    add_response("Describe.ashx", DESCRIBE)
+def test_station_is_cached_after_the_first_lookup(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Describe.ashx", DESCRIBE)
 
     api.station("s24791")
     api.reload()  # Only clears the request cache, not the station cache.
@@ -440,25 +467,26 @@ def test_station_is_cached_after_the_first_lookup(api: tunein.TuneIn) -> None:
     assert station["text"] == "From cache"
 
 
-@responses.activate
-def test_unknown_station_is_none(api: tunein.TuneIn) -> None:
-    add_response("Describe.ashx", [])
+def test_unknown_station_is_none(api: tunein.TuneIn, httpx_mock: HTTPXMock) -> None:
+    add_response(httpx_mock, "Describe.ashx", [])
 
     assert api.station("s404") is None
 
 
-@responses.activate
-def test_failed_station_lookup_is_not_cached(api: tunein.TuneIn) -> None:
-    add_response("Describe.ashx", [])
+def test_failed_station_lookup_is_not_cached(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Describe.ashx", [])
 
     api.station("s404")
 
     assert "s404" not in api._stations
 
 
-@responses.activate
-def test_tune_returns_the_stream_urls_without_duplicates(api: tunein.TuneIn) -> None:
-    add_response("Tune.ashx", TUNE)
+def test_tune_returns_the_stream_urls_without_duplicates(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Tune.ashx", TUNE)
 
     assert api.tune({"guide_id": "s1"}) == [
         "http://stream.example.com/one",
@@ -466,10 +494,9 @@ def test_tune_returns_the_stream_urls_without_duplicates(api: tunein.TuneIn) -> 
     ]
 
 
-@responses.activate
-def test_tune_prefers_mp3_then_the_higher_bitrate() -> None:
+def test_tune_prefers_mp3_then_the_higher_bitrate(httpx_mock: HTTPXMock) -> None:
     api = tunein.TuneIn(timeout=1000, formats=["mp3", "aac"])
-    add_response("Tune.ashx", DUAL_FORMAT_TUNE)
+    add_response(httpx_mock, "Tune.ashx", DUAL_FORMAT_TUNE)
 
     assert api.tune({"guide_id": "s1"}) == [
         "http://a/mp3-high",
@@ -479,23 +506,27 @@ def test_tune_prefers_mp3_then_the_higher_bitrate() -> None:
     ]
 
 
-@responses.activate
-def test_tune_keeps_an_aac_only_station(api: tunein.TuneIn) -> None:
-    add_response("Tune.ashx", [DUAL_FORMAT_TUNE[0], DUAL_FORMAT_TUNE[3]])
+def test_tune_keeps_an_aac_only_station(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Tune.ashx", [DUAL_FORMAT_TUNE[0], DUAL_FORMAT_TUNE[3]])
 
     assert api.tune({"guide_id": "s1"}) == ["http://a/aac-high", "http://a/aac-low"]
 
 
-@responses.activate
-def test_tune_drops_the_not_compatible_recording(api: tunein.TuneIn) -> None:
-    add_response("Tune.ashx", PLACEHOLDER_TUNE)
+def test_tune_drops_the_not_compatible_recording(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Tune.ashx", PLACEHOLDER_TUNE)
 
     assert api.tune({"guide_id": "s1"}) == ["http://a/real"]
 
 
-@responses.activate
-def test_tune_puts_an_unknown_format_last(api: tunein.TuneIn) -> None:
+def test_tune_puts_an_unknown_format_last(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
     add_response(
+        httpx_mock,
         "Tune.ashx",
         [
             {
@@ -533,51 +564,50 @@ def test_stream_priority(stream: dict[str, Any], expected: tuple[int, int]) -> N
     assert tunein.stream_priority(stream) == expected
 
 
-@responses.activate
-def test_formats_are_sent_with_browse_search_and_tune() -> None:
+def test_formats_are_sent_with_browse_search_and_tune(httpx_mock: HTTPXMock) -> None:
     api = tunein.TuneIn(timeout=1000, formats=["mp3", "aac"])
-    add_response("Browse.ashx", [])
-    add_response("Search.ashx", [])
-    add_response("Tune.ashx", [])
+    add_response(httpx_mock, "Browse.ashx", [])
+    add_response(httpx_mock, "Search.ashx", [])
+    add_response(httpx_mock, "Tune.ashx", [])
 
     api.stations("c1")
     api.search("bbc")
     api.tune({"guide_id": "s1"})
 
-    assert all("formats=mp3,aac" in request_url(i) for i in range(3))
+    assert all("formats=mp3,aac" in request_url(httpx_mock, i) for i in range(3))
 
 
-@responses.activate
-def test_formats_are_not_sent_when_not_configured(api: tunein.TuneIn) -> None:
-    add_response("Browse.ashx", [])
+def test_formats_are_not_sent_when_not_configured(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Browse.ashx", [])
 
     api.stations("c1")
 
-    assert "formats=" not in request_url()
+    assert "formats=" not in request_url(httpx_mock)
 
 
-@responses.activate
-def test_formats_are_not_sent_when_describing_a_station() -> None:
+def test_formats_are_not_sent_when_describing_a_station(httpx_mock: HTTPXMock) -> None:
     api = tunein.TuneIn(timeout=1000, formats=["mp3", "aac"])
-    add_response("Describe.ashx", DESCRIBE)
+    add_response(httpx_mock, "Describe.ashx", DESCRIBE)
 
     api.station("s24791")
 
-    assert "formats=" not in request_url()
+    assert "formats=" not in request_url(httpx_mock)
 
 
-@responses.activate
-def test_tune_drops_entries_without_a_url(api: tunein.TuneIn) -> None:
-    add_response("Tune.ashx", [{"element": "audio", "guide_id": "e1"}])
+def test_tune_drops_entries_without_a_url(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Tune.ashx", [{"element": "audio", "guide_id": "e1"}])
 
     assert api.tune({"guide_id": "s1"}) == []
 
 
-@responses.activate
 def test_tune_logs_a_station_without_streams(
-    api: tunein.TuneIn, caplog: pytest.LogCaptureFixture
+    api: tunein.TuneIn, caplog: pytest.LogCaptureFixture, httpx_mock: HTTPXMock
 ) -> None:
-    add_response("Tune.ashx", [])
+    add_response(httpx_mock, "Tune.ashx", [])
 
     with caplog.at_level(logging.ERROR):
         api.tune({"guide_id": "s1"})
@@ -585,88 +615,88 @@ def test_tune_logs_a_station_without_streams(
     assert "Failed to tune station id s1" in caplog.text
 
 
-@responses.activate
-def test_search_keeps_only_stations(api: tunein.TuneIn) -> None:
-    add_response("Search.ashx", SEARCH)
+def test_search_keeps_only_stations(api: tunein.TuneIn, httpx_mock: HTTPXMock) -> None:
+    add_response(httpx_mock, "Search.ashx", SEARCH)
 
     result = api.search("bbc")
 
     assert [s["guide_id"] for s in result] == ["s128641", "s346757"]
 
 
-@responses.activate
-def test_search_fills_the_station_cache(api: tunein.TuneIn) -> None:
-    add_response("Search.ashx", SEARCH)
+def test_search_fills_the_station_cache(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    add_response(httpx_mock, "Search.ashx", SEARCH)
 
     api.search("bbc")
 
     assert set(api._stations) == {"s128641", "s346757"}
 
 
-@responses.activate
-def test_search_empty_query_is_not_requested(api: tunein.TuneIn) -> None:
+def test_search_empty_query_is_not_requested(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
     assert api.search("") == []
-    assert not responses.calls
+    assert not httpx_mock.get_requests()
 
 
-@responses.activate
-def test_search_filter_is_part_of_the_query() -> None:
-    add_response("Search.ashx", [])
+def test_search_filter_is_part_of_the_query(httpx_mock: HTTPXMock) -> None:
+    add_response(httpx_mock, "Search.ashx", [])
 
     tunein.TuneIn(1000, "station").search("bbc")
 
-    assert "filter=s" in request_url()
+    assert "filter=s" in request_url(httpx_mock)
 
 
-@responses.activate
 @pytest.mark.parametrize("url", ["http://a/b.mp3", "http://a/b.wma"])
 def test_parse_stream_url_uses_an_audio_extension_as_is(
-    api: tunein.TuneIn, url: str
+    api: tunein.TuneIn, url: str, httpx_mock: HTTPXMock
 ) -> None:
     assert api.parse_stream_url(url) == [url]
-    assert not responses.calls
+    assert not httpx_mock.get_requests()
 
 
-@responses.activate
-def test_parse_stream_url_parses_a_playlist(api: tunein.TuneIn) -> None:
-    responses.add(
-        responses.GET,
-        "http://a/b.pls",
-        body=b"[playlist]\nNumberOfEntries=1\nFile1=http://a/stream\n",
-        content_type="audio/x-scpls",
+def test_parse_stream_url_parses_a_playlist(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        url="http://a/b.pls",
+        content=b"[playlist]\nNumberOfEntries=1\nFile1=http://a/stream\n",
+        headers={"content-type": "audio/x-scpls"},
     )
 
     assert api.parse_stream_url("http://a/b.pls") == ["http://a/stream"]
 
 
-@responses.activate
-def test_parse_stream_url_uses_a_stream_as_is(api: tunein.TuneIn) -> None:
-    responses.add(responses.GET, "http://a/stream", body=b"", content_type="audio/mpeg")
+def test_parse_stream_url_uses_a_stream_as_is(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        url="http://a/stream", content=b"", headers={"content-type": "audio/mpeg"}
+    )
 
     assert api.parse_stream_url("http://a/stream") == ["http://a/stream"]
 
 
-@responses.activate
-def test_parse_stream_url_falls_back_to_the_content_type(api: tunein.TuneIn) -> None:
-    responses.add(
-        responses.GET,
-        "http://a/listen",
-        body=b"[playlist]\nNumberOfEntries=1\nFile1=http://a/stream\n",
-        content_type="audio/x-scpls; charset=UTF-8",
+def test_parse_stream_url_falls_back_to_the_content_type(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        url="http://a/listen",
+        content=b"[playlist]\nNumberOfEntries=1\nFile1=http://a/stream\n",
+        headers={"content-type": "audio/x-scpls; charset=UTF-8"},
     )
 
     assert api.parse_stream_url("http://a/listen") == ["http://a/stream"]
 
 
-@responses.activate
 def test_parse_stream_url_gives_no_results_for_a_malformed_playlist(
-    api: tunein.TuneIn,
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
 ) -> None:
-    responses.add(
-        responses.GET,
-        "http://a/b.pls",
-        body=b"not a playlist",
-        content_type="audio/x-scpls",
+    httpx_mock.add_response(
+        url="http://a/b.pls",
+        content=b"not a playlist",
+        headers={"content-type": "audio/x-scpls"},
     )
 
     assert api.parse_stream_url("http://a/b.pls") == []
@@ -739,7 +769,7 @@ class EndlessResponse:
     def __init__(self) -> None:
         self.chunks_read = 0
 
-    def iter_content(self, chunk_size: int) -> Generator[bytes]:
+    def iter_bytes(self, chunk_size: int) -> Generator[bytes]:
         while True:
             self.chunks_read += 1
             yield b"x" * chunk_size
@@ -770,20 +800,23 @@ def test_read_playlist_body_gives_up_at_the_deadline(
     assert result is None
 
 
-@responses.activate
-def test_get_playlist_skips_an_audio_body(api: tunein.TuneIn) -> None:
-    responses.add(responses.GET, "http://a/s", body=b"audio", content_type="audio/mpeg")
+def test_get_playlist_skips_an_audio_body(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        url="http://a/s", content=b"audio", headers={"content-type": "audio/mpeg"}
+    )
 
     assert api._get_playlist("http://a/s") == (None, "audio/mpeg")
 
 
-@responses.activate
-def test_get_playlist_skips_an_audio_body_with_a_charset(api: tunein.TuneIn) -> None:
-    responses.add(
-        responses.GET,
-        "http://a/s",
-        body=b"audio",
-        content_type="audio/mpeg; charset=UTF-8",
+def test_get_playlist_skips_an_audio_body_with_a_charset(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        url="http://a/s",
+        content=b"audio",
+        headers={"content-type": "audio/mpeg; charset=UTF-8"},
     )
 
     result = api._get_playlist("http://a/s")
@@ -791,33 +824,34 @@ def test_get_playlist_skips_an_audio_body_with_a_charset(api: tunein.TuneIn) -> 
     assert result == (None, "audio/mpeg; charset=UTF-8")
 
 
-@responses.activate
-def test_get_playlist_reads_a_playlist_body(api: tunein.TuneIn) -> None:
-    responses.add(
-        responses.GET,
-        "http://a/p.pls",
-        body=b"[playlist]",
-        content_type="audio/x-scpls",
+def test_get_playlist_reads_a_playlist_body(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        url="http://a/p.pls",
+        content=b"[playlist]",
+        headers={"content-type": "audio/x-scpls"},
     )
 
     assert api._get_playlist("http://a/p.pls") == (b"[playlist]", "audio/x-scpls")
 
 
-@responses.activate
-def test_get_playlist_failed_request_gives_nothing(api: tunein.TuneIn) -> None:
-    responses.add(responses.GET, "http://a/p.pls", status=404)
+def test_get_playlist_failed_request_gives_nothing(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(url="http://a/p.pls", status_code=404)
 
     assert api._get_playlist("http://a/p.pls") is None
 
 
-@responses.activate
-def test_get_playlist_does_not_keep_a_failed_request(api: tunein.TuneIn) -> None:
-    responses.add(responses.GET, "http://a/p.pls", status=503)
-    responses.add(
-        responses.GET,
-        "http://a/p.pls",
-        body=b"[playlist]",
-        content_type="audio/x-scpls",
+def test_get_playlist_does_not_keep_a_failed_request(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(url="http://a/p.pls", status_code=503)
+    httpx_mock.add_response(
+        url="http://a/p.pls",
+        content=b"[playlist]",
+        headers={"content-type": "audio/x-scpls"},
     )
 
     first = api._get_playlist("http://a/p.pls")
@@ -827,59 +861,55 @@ def test_get_playlist_does_not_keep_a_failed_request(api: tunein.TuneIn) -> None
     assert second == (b"[playlist]", "audio/x-scpls")
 
 
-@responses.activate
-def test_get_playlist_keeps_a_result_that_worked(api: tunein.TuneIn) -> None:
-    responses.add(
-        responses.GET,
-        "http://a/p.pls",
-        body=b"[playlist]",
-        content_type="audio/x-scpls",
+def test_get_playlist_keeps_a_result_that_worked(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        url="http://a/p.pls",
+        content=b"[playlist]",
+        headers={"content-type": "audio/x-scpls"},
     )
 
     api._get_playlist("http://a/p.pls")
     api._get_playlist("http://a/p.pls")
 
-    assert len(responses.calls) == 1
+    assert len(httpx_mock.get_requests()) == 1
 
 
-@responses.activate
-def test_parse_stream_url_after_a_failed_request(api: tunein.TuneIn) -> None:
-    responses.add(responses.GET, "http://a/p.pls", status=503)
-    responses.add(
-        responses.GET,
-        "http://a/p.pls",
-        body=b"[playlist]\nNumberOfEntries=1\nFile1=http://a/stream\n",
-        content_type="audio/x-scpls",
+def test_parse_stream_url_after_a_failed_request(
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(url="http://a/p.pls", status_code=503)
+    httpx_mock.add_response(
+        url="http://a/p.pls",
+        content=b"[playlist]\nNumberOfEntries=1\nFile1=http://a/stream\n",
+        headers={"content-type": "audio/x-scpls"},
     )
 
     assert api.parse_stream_url("http://a/p.pls") == []
     assert api.parse_stream_url("http://a/p.pls") == ["http://a/stream"]
 
 
-@responses.activate
 def test_get_playlist_body_over_the_size_limit_is_not_a_playlist(
-    api: tunein.TuneIn, monkeypatch: pytest.MonkeyPatch
+    api: tunein.TuneIn, monkeypatch: pytest.MonkeyPatch, httpx_mock: HTTPXMock
 ) -> None:
     monkeypatch.setattr(tunein, "PLAYLIST_MAX_BYTES", 1024)
-    responses.add(
-        responses.GET,
-        "http://a/stream",
-        body=b"x" * 4096,
-        content_type="audio/aac",
+    httpx_mock.add_response(
+        url="http://a/stream",
+        content=b"x" * 4096,
+        headers={"content-type": "audio/aac"},
     )
 
     assert api._get_playlist("http://a/stream") == (None, "audio/aac")
 
 
-@responses.activate
 def test_get_playlist_body_under_the_size_limit_is_a_playlist(
-    api: tunein.TuneIn,
+    api: tunein.TuneIn, httpx_mock: HTTPXMock
 ) -> None:
-    responses.add(
-        responses.GET,
-        "http://a/p.pls",
-        body=b"[playlist]\nFile1=http://a/s\n",
-        content_type="audio/x-scpls",
+    httpx_mock.add_response(
+        url="http://a/p.pls",
+        content=b"[playlist]\nFile1=http://a/s\n",
+        headers={"content-type": "audio/x-scpls"},
     )
 
     result = api._get_playlist("http://a/p.pls")
