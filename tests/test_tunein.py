@@ -786,9 +786,9 @@ def test_get_playlist_skips_an_audio_body_with_a_charset(api: tunein.TuneIn) -> 
         content_type="audio/mpeg; charset=UTF-8",
     )
 
-    data, _ = api._get_playlist("http://a/s")
+    result = api._get_playlist("http://a/s")
 
-    assert data is None
+    assert result == (None, "audio/mpeg; charset=UTF-8")
 
 
 @responses.activate
@@ -807,7 +807,53 @@ def test_get_playlist_reads_a_playlist_body(api: tunein.TuneIn) -> None:
 def test_get_playlist_failed_request_gives_nothing(api: tunein.TuneIn) -> None:
     responses.add(responses.GET, "http://a/p.pls", status=404)
 
-    assert api._get_playlist("http://a/p.pls") == (None, None)
+    assert api._get_playlist("http://a/p.pls") is None
+
+
+@responses.activate
+def test_get_playlist_does_not_keep_a_failed_request(api: tunein.TuneIn) -> None:
+    responses.add(responses.GET, "http://a/p.pls", status=503)
+    responses.add(
+        responses.GET,
+        "http://a/p.pls",
+        body=b"[playlist]",
+        content_type="audio/x-scpls",
+    )
+
+    first = api._get_playlist("http://a/p.pls")
+    second = api._get_playlist("http://a/p.pls")
+
+    assert first is None
+    assert second == (b"[playlist]", "audio/x-scpls")
+
+
+@responses.activate
+def test_get_playlist_keeps_a_result_that_worked(api: tunein.TuneIn) -> None:
+    responses.add(
+        responses.GET,
+        "http://a/p.pls",
+        body=b"[playlist]",
+        content_type="audio/x-scpls",
+    )
+
+    api._get_playlist("http://a/p.pls")
+    api._get_playlist("http://a/p.pls")
+
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_parse_stream_url_after_a_failed_request(api: tunein.TuneIn) -> None:
+    responses.add(responses.GET, "http://a/p.pls", status=503)
+    responses.add(
+        responses.GET,
+        "http://a/p.pls",
+        body=b"[playlist]\nNumberOfEntries=1\nFile1=http://a/stream\n",
+        content_type="audio/x-scpls",
+    )
+
+    assert api.parse_stream_url("http://a/p.pls") == []
+    assert api.parse_stream_url("http://a/p.pls") == ["http://a/stream"]
 
 
 @responses.activate
@@ -836,6 +882,7 @@ def test_get_playlist_body_under_the_size_limit_is_a_playlist(
         content_type="audio/x-scpls",
     )
 
-    data, _ = api._get_playlist("http://a/p.pls")
+    result = api._get_playlist("http://a/p.pls")
 
-    assert data == b"[playlist]\nFile1=http://a/s\n"
+    assert result is not None
+    assert result[0] == b"[playlist]\nFile1=http://a/s\n"
