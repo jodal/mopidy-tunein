@@ -64,9 +64,8 @@ category that holds more ends with a "More stations" entry that opens the next
 
 ## Known issues
 
-The following functionality is not implemented yet:
+The following functionality is not implemented:
 
-- Playback of podcasts and shows.
 - User login and access to saved stations.
 
 ## Project resources
