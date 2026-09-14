@@ -428,7 +428,7 @@ class TuneIn:
         if extension in [".mp3", ".wma"]:
             return [url]  # Catch these easy ones
         results: list[str] = []
-        playlist_data, content_type = self._get_playlist(url)
+        playlist_data, content_type = self._get_playlist(url) or (None, None)
         if playlist_data:
             parser = find_playlist_parser(extension, content_type)
             if parser:
@@ -498,7 +498,12 @@ class TuneIn:
         return []
 
     @_playlist_cache
-    def _get_playlist(self, uri: str) -> tuple[bytes | None, str | None]:
+    def _get_playlist(self, uri: str) -> tuple[bytes | None, str | None] | None:
+        """Get the body and the content type of a URI, or None if it failed.
+
+        The cache keeps what this gives back, so a failed request must give
+        back something falsy for the next try to reach the server.
+        """
         data, content_type = None, None
         try:
             # Defer downloading the body until know it's not a stream
@@ -512,4 +517,5 @@ class TuneIn:
                     data = read_playlist_body(r, self._timeout, PLAYLIST_MAX_BYTES)
         except Exception as e:
             logger.info(f"TuneIn playlist request for {uri} failed: {e}")
+            return None
         return (data, content_type)
