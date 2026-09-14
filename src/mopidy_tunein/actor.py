@@ -16,7 +16,7 @@ from mopidy_tunein import Extension, http, parsers, translator, tunein
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    import requests
+    import httpx
     from mopidy.audio import AudioProxy
     from mopidy.config import Config, ProxyConfig
     from mopidy.models import Image, Track
@@ -25,9 +25,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def get_requests_session(proxy_config: ProxyConfig) -> requests.Session:
+def get_httpx_client(proxy_config: ProxyConfig) -> httpx.Client:
     user_agent = f"{Extension.dist_name}/{Extension.version}"
-    return http.get_requests_session(proxy_config=proxy_config, user_agent=user_agent)
+    return http.get_httpx_client(proxy_config=proxy_config, user_agent=user_agent)
 
 
 class TuneInBackend(pykka.ThreadingActor, backend.Backend):
@@ -36,7 +36,7 @@ class TuneInBackend(pykka.ThreadingActor, backend.Backend):
     def __init__(self, config: Config, audio: AudioProxy) -> None:
         super().__init__()
 
-        self._session = get_requests_session(config["proxy"])
+        self._client = get_httpx_client(config["proxy"])
         self._timeout = config["tunein"]["timeout"]
         self._filter = config["tunein"]["filter"]
 
@@ -48,7 +48,7 @@ class TuneInBackend(pykka.ThreadingActor, backend.Backend):
             filter_=config["tunein"]["filter"],
             formats=config["tunein"]["formats"],
             location=config["tunein"]["location"],
-            session=self._session,
+            client=self._client,
         )
         self.library = TuneInLibrary(self)
         self.playback = TuneInPlayback(audio=audio, backend=self)
@@ -258,7 +258,7 @@ class TuneInPlayback(backend.PlaybackProvider):
             uri,
             timeout=self.backend._timeout,
             scanner=self.backend._scanner,
-            requests_session=self.backend._session,
+            http_client=self.backend._client,
         )
         return unwrapped_uri
 
@@ -277,7 +277,7 @@ def _unwrap_stream(  # noqa: PLR0911
     uri: Uri,
     timeout: int,
     scanner: scan.Scanner,
-    requests_session: requests.Session,
+    http_client: httpx.Client,
 ) -> tuple[Uri | None, scan._Result | None]:
     """
     Get a stream URI from a playlist URI, ``uri``.
@@ -330,7 +330,7 @@ def _unwrap_stream(  # noqa: PLR0911
                 f"Unwrapping stream from URI ({uri!r}) failed: timed out in {timeout}ms"
             )
             return None, None
-        content = http.download(requests_session, uri, timeout=download_timeout / 1000)
+        content = http.download(http_client, uri, timeout=download_timeout / 1000)
 
         if content is None:
             logger.info(
