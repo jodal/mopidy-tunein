@@ -9,7 +9,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Generator, Iterable
 from contextlib import closing
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from xml.etree import ElementTree as ET
 
 import requests
@@ -204,6 +204,14 @@ def stream_priority(stream: TuneInItem) -> tuple[int, int]:
     return (rank, -bitrate)
 
 
+def page_offset(uri: str) -> int | None:
+    values = parse_qs(urlparse(uri).query).get("offset", [])
+    try:
+        return int(values[0])
+    except (IndexError, ValueError):
+        return None
+
+
 def media_type(content_type: str) -> str:
     """Get the media type from a content type, without its parameters.
 
@@ -355,10 +363,23 @@ class TuneIn:
         # TODO: Support filters here
         return [x for x in results if x.get("type", "") == "link"]
 
-    def _browse(self, section_name: str, guide_id: str) -> list[TuneInItem]:
+    def _browse_page(self, guide_id: str, offset: int = 0) -> list[TuneInItem]:
         args = "&id=" + guide_id
-        results = self._tunein("Browse.ashx", args)
-        return self._filter_results(results, section_name)
+        if offset:
+            args += f"&offset={offset}"
+        return self._tunein("Browse.ashx", args)
+
+    def _browse(self, section_name: str, guide_id: str) -> list[TuneInItem]:
+        return self._filter_results(self._browse_page(guide_id), section_name)
+
+    def next_stations_offset(self, guide_id: str, offset: int = 0) -> int | None:
+        for item in self._browse_page(guide_id, offset):
+            if not item.get("key", "").lower().startswith("station"):
+                continue
+            for child in item.get("children", []):
+                if child.get("key") == "nextStations":
+                    return page_offset(child.get("URL", ""))
+        return None
 
     def featured(self, guide_id: str) -> list[TuneInItem]:
         return self._browse("Featured", guide_id)
@@ -366,8 +387,8 @@ class TuneIn:
     def local(self, guide_id: str) -> list[TuneInItem]:
         return self._browse("Local", guide_id)
 
-    def stations(self, guide_id: str) -> list[TuneInItem]:
-        return self._browse("Station", guide_id)
+    def stations(self, guide_id: str, offset: int = 0) -> list[TuneInItem]:
+        return self._filter_results(self._browse_page(guide_id, offset), "Station")
 
     def related(self, guide_id: str) -> list[TuneInItem]:
         return self._browse("Related", guide_id)

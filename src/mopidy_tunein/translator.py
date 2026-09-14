@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, Literal, get_args
 from urllib import request
 from urllib.parse import urlsplit, urlunsplit
 
@@ -17,6 +17,21 @@ if TYPE_CHECKING:
     from mopidy_tunein.tunein import TuneInItem
 
 logger = logging.getLogger(__name__)
+
+type Variant = Literal[
+    "root",
+    "category",
+    "location",
+    "section",
+    "stations",
+    "related",
+    "shows",
+    "episodes",
+    "station",
+]
+"""The kinds of thing a tunein URI can point at."""
+
+VARIANTS: Final = get_args(Variant.__value__)
 
 
 def secure_image_uri(uri: str) -> Uri:
@@ -39,11 +54,26 @@ def unparse_uri(variant: str, identifier: str) -> Uri:
     return Uri(f"tunein:{variant}:{identifier}")
 
 
-def parse_uri(uri: str) -> tuple[str | None, str | None]:
+def parse_uri(uri: str) -> tuple[Variant | None, str | None]:
     result = re.findall(r"^tunein:([a-z]+)(?::(\w+))?$", uri)
-    if result:
-        return result[0]
-    return None, None
+    if not result:
+        return None, None
+    variant, identifier = result[0]
+    if variant not in VARIANTS:
+        return None, None
+    return variant, identifier or None
+
+
+def unparse_page_uri(guide_id: str, offset: int) -> Uri:
+    return unparse_uri("stations", f"{guide_id}_{offset}")
+
+
+def parse_page(identifier: str) -> tuple[str, int]:
+    guide_id, _, offset = identifier.partition("_")
+    try:
+        return guide_id, int(offset)
+    except ValueError:
+        return guide_id, 0
 
 
 def station_to_ref(station: TuneInItem) -> Ref:

@@ -63,6 +63,23 @@ STATIONS_SECTION = [
     },
 ]
 
+NEXT_STATIONS = {
+    "element": "outline",
+    "type": "link",
+    "text": "More Stations",
+    "URL": "http://opml.radiotime.com/Browse.ashx?offset=26&id=c1&filter=s",
+    "key": "nextStations",
+}
+
+PAGED_SECTION = [
+    {
+        "element": "outline",
+        "text": "Stations",
+        "key": "stations",
+        "children": [STATION_ONE, STATION_TWO, NEXT_STATIONS],
+    }
+]
+
 DESCRIBE = [
     {
         "element": "outline",
@@ -294,6 +311,59 @@ def test_stations_returns_the_matching_section(api: tunein.TuneIn) -> None:
     result = api.stations("c1")
 
     assert [s["guide_id"] for s in result] == ["s128641", "s346757"]
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("http://a/Browse.ashx?offset=26&id=c1", 26),
+        ("http://a/Browse.ashx?id=c1&offset=51&filter=s", 51),
+        ("http://a/Browse.ashx?id=c1", None),
+        ("http://a/Browse.ashx?offset=lots", None),
+        ("", None),
+    ],
+)
+def test_page_offset(uri: str, expected: int | None) -> None:
+    assert tunein.page_offset(uri) == expected
+
+
+@responses.activate
+def test_next_stations_offset_finds_the_link(api: tunein.TuneIn) -> None:
+    add_response("Browse.ashx", PAGED_SECTION)
+
+    assert api.next_stations_offset("c1") == 26
+
+
+@responses.activate
+def test_next_stations_offset_without_a_link(api: tunein.TuneIn) -> None:
+    add_response("Browse.ashx", STATIONS_SECTION)
+
+    assert api.next_stations_offset("c1") is None
+
+
+@responses.activate
+def test_the_next_page_link_is_not_a_station(api: tunein.TuneIn) -> None:
+    add_response("Browse.ashx", PAGED_SECTION)
+
+    assert [s["guide_id"] for s in api.stations("c1")] == ["s128641", "s346757"]
+
+
+@responses.activate
+def test_stations_asks_for_the_given_page(api: tunein.TuneIn) -> None:
+    add_response("Browse.ashx", PAGED_SECTION)
+
+    api.stations("c1", offset=26)
+
+    assert "offset=26" in request_url()
+
+
+@responses.activate
+def test_stations_asks_for_no_offset_on_the_first_page(api: tunein.TuneIn) -> None:
+    add_response("Browse.ashx", PAGED_SECTION)
+
+    api.stations("c1")
+
+    assert "offset=" not in request_url()
 
 
 @responses.activate
